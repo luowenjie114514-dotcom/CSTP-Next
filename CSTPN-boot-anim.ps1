@@ -200,7 +200,6 @@ function Get-UniformWidth {
 function Format-ColorLine([string]$Line, [int]$Width = 0) {
     if (-not $Line) { return '' }
     if (-not $script:UseTrueColor) { return $Line }
-    if (-not (Enable-VirtualTerminal)) { return $Line }
 
     # 统一按最长行宽度插值（照搬源站 a = Math.max(...) 的做法）
     if ($Width -le 0) { $Width = Get-UniformWidth }
@@ -228,22 +227,31 @@ function Get-ArtWidth {
     return $w
 }
 
+# 输出一行；含 ESC 时走 [Console]::Write（Write-Host 在 PS 5.1 可能破坏转义）
+function Write-RawLine([string]$Text) {
+    if ($null -eq $Text) { $Text = '' }
+    [Console]::Write($Text + [Environment]::NewLine)
+}
+
 function Write-Frame {
     param([string[]]$Lines, [string[]]$Overrides = @())
     Clear-Host
     $trueColor = Enable-VirtualTerminal
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $line = $Lines[$i]
-        if (-not $line) { Write-Host ''; continue }
+        if (-not $line) {
+            if ($trueColor) { Write-RawLine '' } else { Write-Host '' }
+            continue
+        }
         # 遮罩行用固定色
         if ($i -lt $Overrides.Count -and $Overrides[$i]) {
             if ($trueColor) {
-                Write-Host ($Overrides[$i] + $line + $script:Reset)
+                Write-RawLine ($Overrides[$i] + $line + $script:Reset)
             } else {
                 Write-Host $line -ForegroundColor DarkMagenta
             }
         } elseif ($trueColor) {
-            Write-Host (Format-ColorLine $line)
+            Write-RawLine (Format-ColorLine $line)
         } else {
             # 真彩色不可用 -> 16 色降级，保证有颜色
             Write-ColoredLine16 $line
@@ -283,7 +291,7 @@ function Show-CstpnBootLogo {
         if (-not $NoClear) { Clear-Host }
         $tc = Enable-VirtualTerminal
         foreach ($line in $next) {
-            if ($tc) { Write-Host (Format-ColorLine $line) }
+            if ($tc) { Write-RawLine (Format-ColorLine $line) }
             else { Write-ColoredLine16 $line }
         }
         Write-Host ''
@@ -340,6 +348,14 @@ function Show-CstpnBootLogo {
         Start-Sleep -Milliseconds ([int](90 * $Speed))
     }
 
-    # 最后一帧已是完整 Next，只补空行（不再重复打印）
+    # ---- 收尾：显式重绘完整 Next，确保最后画面是渐变色 ----
+    # 循环最后一帧虽然已是完整 Next，但后续输出可能重置颜色状态，
+    # 这里再画一次，保证视觉终态稳定。
+    Clear-Host
+    $tcFinal = Enable-VirtualTerminal
+    foreach ($line in $next) {
+        if ($tcFinal) { Write-RawLine (Format-ColorLine $line) }
+        else { Write-ColoredLine16 $line }
+    }
     Write-Host ''
 }
