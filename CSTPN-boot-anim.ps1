@@ -123,6 +123,71 @@ function Format-TrueColor($rgb) {
 
 
 # 给一行按列上色（照搬源站 Ae 函数逻辑）
+# 16 色降级表：Sunset #FB7185 -> #F59E0B 的近似
+# 每档对应 [r,g,b] 和最近的 ConsoleColor
+$script:Sunset16 = @(
+    @{ rgb = @(251,113,133); cc = [ConsoleColor]::Magenta    }   # #FB7185 rose
+    @{ rgb = @(250,124,102); cc = [ConsoleColor]::Magenta    }
+    @{ rgb = @(249,131,84);  cc = [ConsoleColor]::Red        }
+    @{ rgb = @(248,140,66);  cc = [ConsoleColor]::Red        }
+    @{ rgb = @(247,147,47);  cc = [ConsoleColor]::DarkYellow }
+    @{ rgb = @(246,154,27);  cc = [ConsoleColor]::Yellow     }
+    @{ rgb = @(245,158,11);  cc = [ConsoleColor]::Yellow     }   # #F59E0B amber
+)
+
+function Get-Nearest16([int]$r, [int]$g, [int]$b) {
+    $best = $script:Sunset16[0]
+    $bestDist = [double]::MaxValue
+    foreach ($entry in $script:Sunset16) {
+        $dr = $r - $entry.rgb[0]
+        $dg = $g - $entry.rgb[1]
+        $db = $b - $entry.rgb[2]
+        $dist = $dr * $dr + $dg * $dg + $db * $db
+        if ($dist -lt $bestDist) { $bestDist = $dist; $best = $entry }
+    }
+    return $best.cc
+}
+
+# 把一行按 16 色分段输出（连续同色合并，减少 Write-Host 调用）
+function Write-ColoredLine16([string]$Line) {
+    if (-not $Line) { Write-Host ''; return }
+    $w = Get-UniformWidth
+    $len = $Line.Length
+    $sb = New-Object System.Text.StringBuilder
+    $curColor = $null
+    $curIdx = 0
+
+    $flush = {
+        if ($sb.Length -gt 0 -and $null -ne $curColor) {
+            Write-Host $sb.ToString() -ForegroundColor $curColor -NoNewline
+            [void]$sb.Clear()
+        }
+    }
+
+    for ($i = 0; $i -lt $len; $i++) {
+        $ch = $Line[$i]
+        if ($ch -eq ' ') {
+            [void]$sb.Append($ch)
+            continue
+        }
+        $t = if ($w -le 1) { 0 } else { $i / ($w - 1) }
+        $rgb = Get-GradientRgb $t
+        $cc = Get-Nearest16 $rgb.r $rgb.g $rgb.b
+        if ($cc -ne $curColor) {
+            if ($null -ne $curColor) {
+                Write-Host $sb.ToString() -ForegroundColor $curColor -NoNewline
+                [void]$sb.Clear()
+            }
+            $curColor = $cc
+        }
+        [void]$sb.Append($ch)
+    }
+    if ($sb.Length -gt 0 -and $null -ne $curColor) {
+        Write-Host $sb.ToString() -ForegroundColor $curColor -NoNewline
+    }
+    Write-Host ''
+}
+
 function Get-UniformWidth {
     if ($script:CachedWidth) { return $script:CachedWidth }
     $w = 1
@@ -166,14 +231,22 @@ function Get-ArtWidth {
 function Write-Frame {
     param([string[]]$Lines, [string[]]$Overrides = @())
     Clear-Host
+    $trueColor = Enable-VirtualTerminal
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $line = $Lines[$i]
         if (-not $line) { Write-Host ''; continue }
         # 遮罩行用固定色
         if ($i -lt $Overrides.Count -and $Overrides[$i]) {
-            Write-Host ($Overrides[$i] + $line + $script:Reset)
-        } else {
+            if ($trueColor) {
+                Write-Host ($Overrides[$i] + $line + $script:Reset)
+            } else {
+                Write-Host $line -ForegroundColor DarkMagenta
+            }
+        } elseif ($trueColor) {
             Write-Host (Format-ColorLine $line)
+        } else {
+            # 真彩色不可用 -> 16 色降级，保证有颜色
+            Write-ColoredLine16 $line
         }
     }
 }
@@ -208,7 +281,11 @@ function Show-CstpnBootLogo {
 
     if ($Skip) {
         if (-not $NoClear) { Clear-Host }
-        foreach ($line in $next) { Write-Host (Format-ColorLine $line) }
+        $tc = Enable-VirtualTerminal
+        foreach ($line in $next) {
+            if ($tc) { Write-Host (Format-ColorLine $line) }
+            else { Write-ColoredLine16 $line }
+        }
         Write-Host ''
         return
     }
