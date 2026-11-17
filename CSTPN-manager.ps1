@@ -1,110 +1,61 @@
 ﻿<#
 .SYNOPSIS
-    CSTP Next · 补丁管理器：交互式启用/回滚各补丁。
+    CSTP Next · 补丁管理器。
 
 .DESCRIPTION
-    统一管理 patch / add / test 三个分支的补丁，支持：
+    交互式启用/回滚各补丁，支持远程同步与自动下载。
 
-      - 交互式菜单：逐个选择启用或回滚
-      - 冲突处理：WEB_INP 在 patch（半自动）与 add（全自动）下互斥，
-        启用一侧自动卸载另一侧
-      - 状态检测：显示每个补丁当前是否已安装
-
-    补丁清单（标注来源分支）：
-
-      [patch] WEB_EXP  导出（PNG/HTML/JSON，浏览器下载）
-      [patch] WEB_ID   会话 ID 显示与复制
-      [patch] WEB_INP  导入（半自动：生成文件 + 拖入目录）
-      [add]   WEB_INP  导入（全自动：后端接口，需手工合并 api.ts）
-      [patch] WEB_OTP  动态码登录入口 + 账户页 OA 文案
-      [patch] WEB_SRH  会话列表搜索
-      [test]  TOOL-SUMMARY  工具调用摘要面板
-      [test]  TURN-NAV      轮次导航条
-      [test]  SESSION-PLUS  置顶/行内重命名/会话内搜索
+    核心能力：
+      - 启动时从 GitHub 拉取 CATALOG.md 更新补丁清单（失败则用内置清单）
+      - 找不到 cst-pilot 时弹出文件夹选择对话框
+      - 本地缺少补丁文件时自动从 GitHub 下载（按分支取对应文件）
+      - 冲突补丁自动互斥（WEB_INP ↔ WEB_INP_ADD，WEB_SRH ↔ SESSION-PLUS）
 
 .PARAMETER Target
-    cst-pilot 目录。省略时依次尝试 <脚本目录>\cst-pilot 与 <脚本目录>。
+    cst-pilot 目录。省略时自动探测，探测失败弹选择框。
 
 .PARAMETER Source
-    补丁脚本根目录（含 WEB_EXP/WEB_ID/... 子目录，或平铺的 CSTPN-*.ps1）。
-    默认取脚本自身所在目录。
+    补丁缓存目录。默认 <脚本目录>\_cstpn-cache。
+
+.PARAMETER NoSync
+    跳过启动时的远程清单更新。
 
 .PARAMETER NonInteractive
-    非交互模式：只显示状态，不进入菜单。
+    只显示状态，不进入菜单。
 
 .EXAMPLE
-    .\CSTPN-manager.ps1 -Target 'C:\Users\ANWEN\Desktop\cst-pilot'
+    .\CSTPN-manager.ps1
 .EXAMPLE
-    .\CSTPN-manager.ps1 -Target '...' -NonInteractive
+    .\CSTPN-manager.ps1 -Target 'C:\kits\cst-pilot'
 #>
 [CmdletBinding()]
 param(
     [string]$Target,
     [string]$Source,
+    [switch]$NoSync,
     [switch]$NonInteractive
 )
 
 $ErrorActionPreference = 'Stop'
 
+$script:Repo = 'luowenjie114514-dotcom/CSTP-Next'
 $script:StaticRel = 'agent/home/extensions/web/static'
 $script:IndexRel = "$($script:StaticRel)/index.html"
+$script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:CacheDir = if ($Source) { $Source } else { Join-Path $script:ScriptDir '_cstpn-cache' }
+$script:SyncInfo = '未同步'
 
-# ---------------------------------------------------------------- 补丁定义
-# Branch: 来源分支标注；Apply/Rollback: 脚本文件名（相对 Source 或本目录）；
-# Conflicts: 互斥补丁 Id；Files: 安装后出现的标记文件（检测状态用）
+# ---------------------------------------------------------------- 内置清单（远程失败时的兜底）
 $script:Catalog = @(
-    @{
-        Id = 'WEB_EXP'; Branch = 'patch'; Name = '导出（PNG/HTML/JSON，浏览器下载）'
-        Apply = 'CSTPN-apply-export.ps1'; Rollback = 'CSTPN-rollback-export.ps1'
-        Conflicts = @(); Marker = 'CSTPN-session-export.js'
-    },
-    @{
-        Id = 'WEB_ID'; Branch = 'patch'; Name = '会话 ID 显示与复制'
-        Apply = 'CSTPN-apply-idimp.ps1'; Rollback = 'CSTPN-rollback-idimp.ps1'
-        Conflicts = @(); Marker = 'CSTPN-session-id.js'
-    },
-    @{
-        Id = 'WEB_INP'; Branch = 'patch'; Name = '导入 · 半自动（生成文件 + 拖入目录）'
-        Apply = 'CSTPN-apply-idimp.ps1'; Rollback = 'CSTPN-rollback-idimp.ps1'
-        Conflicts = @('WEB_INP_ADD'); Marker = 'CSTPN-session-import.js'
-        SharedWith = 'WEB_ID'
-    },
-    @{
-        Id = 'WEB_INP_ADD'; Branch = 'add'; Name = '导入 · 全自动（后端接口，需手工合并 api.ts）'
-        Apply = $null; Rollback = $null   # 后端部分手工，管理器只负责前端+提示
-        Conflicts = @('WEB_INP'); Marker = 'CSTPN-backend-import.ts'
-        SharedWith = 'WEB_ID'
-    },
-    @{
-        Id = 'WEB_OTP'; Branch = 'patch'; Name = '动态码登录入口 + 账户页 OA 文案'
-        Apply = 'CSTPN-apply-otp.ps1'; Rollback = 'CSTPN-rollback-otp.ps1'
-        Conflicts = @(); Marker = 'CSTPN-cstoa-open-auth.js'
-        Extra = @{ Apply = 'CSTPN-apply-oa-login-text.ps1'; Rollback = 'CSTPN-rollback-oa-login-text.ps1' }
-    },
-    @{
-        Id = 'WEB_SRH'; Branch = 'patch'; Name = '会话列表搜索'
-        Apply = 'CSTPN-apply-srh.ps1'; Rollback = 'CSTPN-rollback-srh.ps1'
-        Conflicts = @(); Marker = 'CSTPN-session-search.js'
-    },
-    @{
-        Id = 'TOOL-SUMMARY'; Branch = 'test'; Name = '工具调用摘要面板'
-        Apply = $null; Rollback = $null     # test 期单文件，管理器直接拷/删
-        Conflicts = @(); Marker = 'CSTPN-tool-summary.js'
-        Script = 'CSTPN-tool-summary.js'
-    },
-    @{
-        Id = 'TURN-NAV'; Branch = 'test'; Name = '轮次导航条'
-        Apply = $null; Rollback = $null
-        Conflicts = @(); Marker = 'CSTPN-turn-nav.js'
-        Script = 'CSTPN-turn-nav.js'
-    },
-    @{
-        Id = 'SESSION-PLUS'; Branch = 'test'; Name = '置顶 / 行内重命名 / 会话内搜索'
-        Apply = $null; Rollback = $null
-        Conflicts = @('WEB_SRH')            # 搜索功能重叠
-        Marker = 'CSTPN-session-plus.js'
-        Script = 'CSTPN-session-plus.js'
-    }
+    @{ Id='WEB_EXP'; Branch='patch'; Apply='WEB_EXP/CSTPN-apply-export.ps1'; Rollback='WEB_EXP/CSTPN-rollback-export.ps1'; Marker='CSTPN-session-export.js'; Name='导出（PNG/HTML/JSON，浏览器下载）'; Conflicts=@() },
+    @{ Id='WEB_ID'; Branch='patch'; Apply='WEB_ID/CSTPN-apply-idimp.ps1'; Rollback='WEB_ID/CSTPN-rollback-idimp.ps1'; Marker='CSTPN-session-id.js'; Name='会话 ID 显示与复制'; Conflicts=@() },
+    @{ Id='WEB_INP'; Branch='patch'; Apply='WEB_INP/CSTPN-apply-idimp.ps1'; Rollback='WEB_INP/CSTPN-rollback-idimp.ps1'; Marker='CSTPN-session-import.js'; Name='导入 · 半自动'; Conflicts=@('WEB_INP_ADD') },
+    @{ Id='WEB_INP_ADD'; Branch='add'; Apply=''; Rollback=''; Marker=''; Name='导入 · 全自动（需手工合并 api.ts）'; Conflicts=@('WEB_INP') },
+    @{ Id='WEB_OTP'; Branch='patch'; Apply='WEB_OTP/CSTPN-apply-otp.ps1'; Rollback='WEB_OTP/CSTPN-rollback-otp.ps1'; Marker='CSTPN-cstoa-open-auth.js'; Name='动态码登录入口'; Conflicts=@() },
+    @{ Id='WEB_SRH'; Branch='patch'; Apply='WEB_SRH/CSTPN-apply-srh.ps1'; Rollback='WEB_SRH/CSTPN-rollback-srh.ps1'; Marker='CSTPN-session-search.js'; Name='会话列表搜索'; Conflicts=@('SESSION-PLUS') },
+    @{ Id='TOOL-SUM'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-tool-summary.js'; Name='工具调用摘要面板'; Conflicts=@() },
+    @{ Id='TURN-NAV'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-turn-nav.js'; Name='轮次导航条'; Conflicts=@() },
+    @{ Id='SESSION-PLUS'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-session-plus.js'; Name='置顶/行内重命名/会话内搜索'; Conflicts=@('WEB_SRH') }
 )
 
 function Write-Head([string]$Text) {
@@ -117,159 +68,341 @@ function Test-Kit([string]$Path) {
     return (Test-Path -LiteralPath (Join-Path $Path 'agent/home/extensions/oauth/oa.ts') -PathType Leaf)
 }
 
-# ---------------------------------------------------------------- 状态检测
-function Get-State([string]$Target, $item) {
-    $installed = Test-Path -LiteralPath (Join-Path $Target "$($script:StaticRel)/$($item.Marker)") -PathType Leaf
-    if ($item.Id -eq 'WEB_INP_ADD') {
-        # add 导入的前端部分与 patch 相同；真正区别是后端 ts 是否已合并
-        $frontend = Test-Path -LiteralPath (Join-Path $Target "$($script:StaticRel)/CSTPN-session-import.js") -PathType Leaf
-        $backendMerged = Select-String -Path (Join-Path $Target 'agent/home/extensions/web/server/api.ts') -Pattern 'cstpn-import' -Quiet -ErrorAction SilentlyContinue
-        $installed = $frontend -and $backendMerged
+# ---------------------------------------------------------------- 远程清单
+function Sync-Catalog {
+    if ($NoSync) { $script:SyncInfo = '已跳过'; return }
+    $md = $null
+
+    # 方式 1：API contents（raw.githubusercontent 在部分网络被拦截）
+    try {
+        $headers = @{ Accept = 'application/vnd.github.raw'; 'User-Agent' = 'cstpn-manager' }
+        if ($script:Token) { $headers['Authorization'] = "Bearer $($script:Token)" }
+        $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/$($script:Repo)/contents/CATALOG.md?ref=main" -Headers $headers -UseBasicParsing -TimeoutSec 10
+        $md = $resp.Content
+        if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
+    } catch { }
+
+    # 方式 2：raw 兜底
+    if (-not $md) {
+        try {
+            $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$($script:Repo)/main/CATALOG.md" -UseBasicParsing -TimeoutSec 10).Content
+            if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
+        } catch { }
     }
-    return $installed
+
+    if (-not $md) { $script:SyncInfo = '远程不可用，用内置'; return }
+
+    try {
+        $items = @()
+        $conflicts = @{}
+        $cBlock = [regex]::Match($md, '(?s)```conflicts\r?\n(.*?)```')
+        if ($cBlock.Success) {
+            foreach ($line in ($cBlock.Groups[1].Value -split "`r?`n")) {
+                if ($line -match '^\s*(\S+)\s*\|\s*(\S+)\s*$') {
+                    $a = $Matches[1]; $b = $Matches[2]
+                    if (-not $conflicts.ContainsKey($a)) { $conflicts[$a] = @() }
+                    if (-not $conflicts.ContainsKey($b)) { $conflicts[$b] = @() }
+                    $conflicts[$a] += $b
+                    $conflicts[$b] += $a
+                }
+            }
+        }
+        $block = [regex]::Match($md, '(?s)```catalog\r?\n(.*?)```')
+        if ($block.Success) {
+            foreach ($line in ($block.Groups[1].Value -split "`r?`n")) {
+                if (-not $line.Trim()) { continue }
+                $p = $line -split '\s*\|\s*'
+                if ($p.Count -lt 6) { continue }
+                $id = $p[0].Trim()
+                $applyVal = ''
+                if ($p[2].Trim() -ne '-') { $applyVal = $p[2].Trim() }
+                $rollbackVal = ''
+                if ($p[3].Trim() -ne '-') { $rollbackVal = $p[3].Trim() }
+                $markerVal = ''
+                if ($p[4].Trim() -ne '-') { $markerVal = $p[4].Trim() }
+                $conflictVal = @()
+                if ($conflicts.ContainsKey($id)) { $conflictVal = $conflicts[$id] }
+                $items += @{
+                    Id = $id
+                    Branch = $p[1].Trim()
+                    Apply = $applyVal
+                    Rollback = $rollbackVal
+                    Marker = $markerVal
+                    Name = $p[5].Trim()
+                    Conflicts = $conflictVal
+                }
+            }
+        }
+        if ($items.Count -gt 0) {
+            $script:Catalog = $items
+            $script:SyncInfo = "已同步（$($items.Count) 项）"
+        } else {
+            $script:SyncInfo = '清单格式异常，用内置'
+        }
+    } catch {
+        $script:SyncInfo = '解析失败，用内置'
+    }
 }
 
-function Show-Status([string]$Target) {
-    Write-Head '当前状态'
+# ---------------------------------------------------------------- 目录选择
+function Select-KitDirectory {
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = '请选择 cst-pilot 目录（包含 agent 文件夹的那一层）'
+    $dialog.ShowNewFolderButton = $false
+    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        return $dialog.SelectedPath
+    }
+    return $null
+}
+
+function Resolve-Target {
+    if ($Target) { return $Target }
+    $sibling = Join-Path $script:ScriptDir 'cst-pilot'
+    if (Test-Kit $sibling) { return $sibling }
+    if (Test-Kit $script:ScriptDir) { return $script:ScriptDir }
+    if (Test-Kit (Get-Location).Path) { return (Get-Location).Path }
+
+    Write-Host "未自动找到 cst-pilot 目录。" -ForegroundColor Yellow
+    $picked = Select-KitDirectory
+    if (-not $picked) {
+        Write-Host "未选择目录，退出。" -ForegroundColor Red
+        exit 1
+    }
+    return $picked
+}
+
+# ---------------------------------------------------------------- 远程下载
+function Ensure-PatchFiles([string]$relPath, [string]$branch) {
+    # 补丁脚本常需要同目录的 .js；启用前把该目录内所有已知文件拉到缓存
+    $files = @($relPath)
+    $dir = Split-Path $relPath -Parent
+    if ($dir) {
+        # 列出该目录在仓库里的全部文件，逐个确保存在
+        $dirFiles = @()
+        try {
+            $headers = @{ 'User-Agent' = 'cstpn-manager'; Accept = 'application/vnd.github+json' }
+            if ($script:Token) { $headers['Authorization'] = "Bearer $($script:Token)" }
+            $api = "https://api.github.com/repos/$($script:Repo)/contents/$dir" + "?ref=$branch"
+            $list = Invoke-RestMethod -Uri $api -Headers $headers -TimeoutSec 15
+            foreach ($f in $list) {
+                if ($f.type -eq 'file') { $dirFiles += "$dir/$($f.name)" }
+            }
+        } catch { }
+        if ($dirFiles.Count -gt 0) { $files = $dirFiles }
+    }
+
+    $ok = $true
+    foreach ($f in $files) {
+        $got = Ensure-RemoteFile $f $branch
+        if (-not $got) { $ok = $false }
+    }
+    return $ok
+}
+
+function Test-Online {
+    try {
+        $null = Invoke-WebRequest -Uri "https://api.github.com" -UseBasicParsing -TimeoutSec 6 -Method Head
+        return $true
+    } catch { return $false }
+}
+
+<#
+ * 确保本地缓存里有某个文件；缺则从 GitHub 下载。
+ * 返回本地路径，失败返回 $null。
+ #>
+function Ensure-RemoteFile([string]$relPath, [string]$branch) {
+    if (-not $relPath) { return $null }
+    $local = Join-Path $script:CacheDir ($relPath -replace '/', '\')
+    if (Test-Path -LiteralPath $local -PathType Leaf) { return $local }
+
+    $parent = Split-Path $local -Parent
+    if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+
+    $bytes = $null
+
+    # 方式 1：API contents
+    try {
+        $apiUrl = "https://api.github.com/repos/$($script:Repo)/contents/$relPath" + "?ref=$branch"
+        $headers = @{ Accept = 'application/vnd.github.raw'; 'User-Agent' = 'cstpn-manager' }
+        if ($script:Token) { $headers['Authorization'] = "Bearer $($script:Token)" }
+        $resp = Invoke-WebRequest -Uri $apiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20
+        $bytes = $resp.Content
+    } catch { }
+
+    # 方式 2：raw 兜底
+    if (-not $bytes) {
+        try {
+            $rawUrl = "https://raw.githubusercontent.com/$($script:Repo)/$branch/$relPath"
+            $resp = Invoke-WebRequest -Uri $rawUrl -UseBasicParsing -TimeoutSec 20
+            $bytes = $resp.Content
+        } catch { }
+    }
+
+    if (-not $bytes) {
+        Write-Host "    下载失败：$relPath" -ForegroundColor Red
+        return $null
+    }
+
+    if ($bytes -is [string]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($bytes) }
+    [System.IO.File]::WriteAllBytes($local, [byte[]]$bytes)
+    Write-Host "    已下载 $relPath（$($bytes.Length)B）" -ForegroundColor DarkGray
+    return $local
+}
+
+# ---------------------------------------------------------------- 状态
+function Get-State([string]$Kit, $item) {
+    if ($item.Id -eq 'WEB_INP_ADD') {
+        $fe = Test-Path -LiteralPath (Join-Path $Kit "$($script:StaticRel)/CSTPN-session-import.js") -PathType Leaf
+        $be = Select-String -Path (Join-Path $Kit 'agent/home/extensions/web/server/api.ts') -Pattern 'cstpn-import' -Quiet -ErrorAction SilentlyContinue
+        return ($fe -and $be)
+    }
+    if (-not $item.Marker) { return $false }
+    return (Test-Path -LiteralPath (Join-Path $Kit "$($script:StaticRel)/$($item.Marker)") -PathType Leaf)
+}
+
+function Show-Status([string]$Kit) {
+    Write-Head "当前状态（清单：$($script:SyncInfo)）"
     foreach ($item in $script:Catalog) {
-        $installed = Get-State $Target $item
+        $installed = Get-State $Kit $item
         $mark = if ($installed) { '[已启用]' } else { '[  无  ]' }
         $color = if ($installed) { 'Green' } else { 'DarkGray' }
-        $conflict = if ($item.Conflicts.Count) { " (互斥: $($item.Conflicts -join '/'))" } else { '' }
-        Write-Host "  $mark [$($item.Branch)] $($item.Id)  $($item.Name)$conflict" -ForegroundColor $color
+        $conf = if ($item.Conflicts.Count) { " (互斥: $($item.Conflicts -join '/'))" } else { '' }
+        $tag = "[$($item.Branch)]".PadRight(8)
+        Write-Host "  $mark $tag $($item.Id.PadRight(13)) $($item.Name)$conf" -ForegroundColor $color
     }
-    # 提示已安装脚本与 index 引用数
-    $static = Join-Path $Target $script:StaticRel
-    $scripts = (Get-ChildItem $static -Filter 'CSTPN-*.js' -ErrorAction SilentlyContinue).Count
-    $idxText = [System.IO.File]::ReadAllText((Join-Path $Target $script:IndexRel))
-    $refs = ([regex]::Matches($idxText, 'src="/CSTPN-[^"]+\.js"')).Count
+    $static = Join-Path $Kit $script:StaticRel
+    $n = (Get-ChildItem $static -Filter 'CSTPN-*.js' -ErrorAction SilentlyContinue).Count
     Write-Host ""
-    Write-Host "  （static 下 CSTPN-*.js 共 $scripts 个；index.html 引用 $refs 个）" -ForegroundColor DarkGray
+    Write-Host "  （static 下 CSTPN-*.js 共 $n 个）" -ForegroundColor DarkGray
 }
 
-# ---------------------------------------------------------------- 动作
-function Invoke-PatchScript([string]$ScriptPath, [string]$Target, [string]$SourceDir, [switch]$WhatIf) {
-    if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "找不到脚本：$ScriptPath" }
-    # 安装脚本接受 -Source；回滚脚本只有 -Target/-DryRun。
-    # 传错参数会让 PowerShell 直接拒绝执行（且错误可能被吞掉），因此按需拼参。
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-Target', $Target)
+# ---------------------------------------------------------------- 执行
+function Invoke-Script([string]$ScriptPath, [string]$Kit, [string]$SourceDir) {
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-Target', $Kit)
     if ((Split-Path $ScriptPath -Leaf) -notlike 'CSTPN-rollback-*') { $argv += @('-Source', $SourceDir) }
-    if ($WhatIf) { $argv += '-DryRun' }
-
-    $output = & powershell @argv 2>&1
+    $out = & powershell @argv 2>&1
     $code = $LASTEXITCODE
-    $output | ForEach-Object { Write-Host "    $_" }
-    if ($code -ne 0) { throw "脚本执行失败（$([System.IO.Path]::GetFileName($ScriptPath))，退出码 $code）" }
+    $out | ForEach-Object { Write-Host "    $_" }
+    if ($code -ne 0) { throw "脚本失败（$([System.IO.Path]::GetFileName($ScriptPath))，退出码 $code）" }
 }
 
-function Copy-TestScript([string]$Target, [string]$SourceDir, [string]$Name, [switch]$Remove) {
-    $static = Join-Path $Target $script:StaticRel
+<# 测试补丁：直接拷 js + 改 index.html。 #>
+function Set-TestPatch([string]$Kit, [string]$Name, [switch]$Remove) {
+    $static = Join-Path $Kit $script:StaticRel
     $index = Join-Path $static 'index.html'
     $tag = "<script type=`"module`" src=`"/$Name`"></script>"
-    $encoding = New-Object System.Text.UTF8Encoding($false)
+    $enc = New-Object System.Text.UTF8Encoding($false)
 
     if ($Remove) {
         $dst = Join-Path $static $Name
         if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
         $raw = [System.IO.File]::ReadAllBytes($index)
-        $hasBom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF)
-        $text = [System.IO.File]::ReadAllText($index, $encoding).Replace($tag, '')
-        $out = $encoding.GetBytes($text)
-        if ($hasBom) { $out = [byte[]](0xEF, 0xBB, 0xBF) + $out }
+        $bom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF)
+        $text = [System.IO.File]::ReadAllText($index, $enc).Replace($tag, '')
+        $out = $enc.GetBytes($text)
+        if ($bom) { $out = [byte[]](0xEF,0xBB,0xBF) + $out }
         [System.IO.File]::WriteAllBytes($index, $out)
-        Write-Host "  已移除 $Name" -ForegroundColor Green
+        Write-Host "    已移除 $Name" -ForegroundColor Green
         return
     }
 
-    $src = Join-Path $SourceDir $Name
-    if (-not (Test-Path -LiteralPath $src)) { throw "找不到 $Name（请把 test 脚本放到 -Source 目录）" }
+    # 本地缓存找，没有则远程下载
+    $candidates = @(
+        (Join-Path $script:CacheDir $Name),
+        (Join-Path $script:ScriptDir $Name),
+        (Join-Path $script:ScriptDir "test-scripts\$Name")
+    )
+    $src = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $src) {
+        # 尝试从 test 分支的对应目录下载
+        $dirMap = @{ 'CSTPN-tool-summary.js'='TOOL-SUM'; 'CSTPN-turn-nav.js'='TURN-NAV'; 'CSTPN-session-plus.js'='SESSION-PLUS' }
+        $dir = $dirMap[$Name]
+        if ($dir) { $src = Ensure-RemoteFile "$dir/$Name" 'test' }
+    }
+    if (-not $src) { throw "找不到 $Name（也不在本地缓存）" }
+
     Copy-Item -LiteralPath $src -Destination (Join-Path $static $Name) -Force
 
     $raw = [System.IO.File]::ReadAllBytes($index)
-    $hasBom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF)
-    $text = [System.IO.File]::ReadAllText($index, $encoding)
+    $bom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF)
+    $text = [System.IO.File]::ReadAllText($index, $enc)
     if (-not $text.Contains($tag)) {
         $pos = $text.IndexOf('</head>')
         $text = $text.Substring(0, $pos) + $tag + $text.Substring($pos)
     }
-    $out = $encoding.GetBytes($text)
-    if ($hasBom) { $out = [byte[]](0xEF, 0xBB, 0xBF) + $out }
+    $out = $enc.GetBytes($text)
+    if ($bom) { $out = [byte[]](0xEF,0xBB,0xBF) + $out }
     [System.IO.File]::WriteAllBytes($index, $out)
-    Write-Host "  已安装 $Name" -ForegroundColor Green
+    Write-Host "    已安装 $Name" -ForegroundColor Green
 }
 
-function Enable-Patch([string]$Target, $item, [string]$SourceDir) {
-    # 先卸载互斥补丁
-    foreach ($conflictId in $item.Conflicts) {
-        $other = $script:Catalog | Where-Object { $_.Id -eq $conflictId }
-        if ($other -and (Get-State $Target $other)) {
-            Write-Host "  ↳ 检测到冲突：$($other.Id) 已启用，先卸载…" -ForegroundColor Yellow
-            Disable-Patch $Target $other $SourceDir
+function Enable-Patch([string]$Kit, $item) {
+    foreach ($cid in $item.Conflicts) {
+        $other = $script:Catalog | Where-Object { $_.Id -eq $cid } | Select-Object -First 1
+        if ($other -and (Get-State $Kit $other)) {
+            Write-Host "  ↳ 冲突：$($other.Id) 已启用，先卸载…" -ForegroundColor Yellow
+            Disable-Patch $Kit $other
         }
     }
 
     if ($item.Id -eq 'WEB_INP_ADD') {
-        Write-Host "  WEB_INP_ADD 的前端部分即 WEB_INP 补丁，现在安装…" -ForegroundColor Yellow
-        $frontend = $script:Catalog | Where-Object { $_.Id -eq 'WEB_INP' }
-        Invoke-PatchScript (Join-Path $SourceDir $frontend.Apply) $Target $SourceDir
+        Write-Host "  全自动导入的前端部分复用 WEB_INP，先装它…" -ForegroundColor Yellow
+        $fe = $script:Catalog | Where-Object { $_.Id -eq 'WEB_INP' } | Select-Object -First 1
+        Enable-Patch $Kit $fe
         Write-Host ""
-        Write-Host "  ⚠️ 后端部分需手工合并：把 WEB_INP/CSTPN-backend-import.ts 的内容" -ForegroundColor Yellow
-        Write-Host "     接入 agent/home/extensions/web/server/api.ts（详见 add 分支 README）。" -ForegroundColor Yellow
+        Write-Host "  ⚠️ 后端需手工合并 WEB_INP/CSTPN-backend-import.ts 到 api.ts" -ForegroundColor Yellow
         return
     }
 
     if ($item.Apply) {
-        Invoke-PatchScript (Join-Path $SourceDir $item.Apply) $Target $SourceDir
-        if ($item.Extra -and $item.Extra.Apply) {
-            Invoke-PatchScript (Join-Path $SourceDir $item.Extra.Apply) $Target $SourceDir
-        }
+        # 连同目录内其他文件一起准备（补丁脚本通常依赖同目录 .js）
+        $null = Ensure-PatchFiles $item.Apply $item.Branch
+        $local = Join-Path $script:CacheDir ($item.Apply -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $local)) { throw "无法获取 $($item.Apply)" }
+        Invoke-Script $local $Kit (Split-Path $local -Parent)
+        return
     }
-    elseif ($item.Script) {
-        Copy-TestScript $Target $SourceDir $item.Script
-    }
+
+    if ($item.Marker) { Set-TestPatch $Kit $item.Marker }
 }
 
-function Disable-Patch([string]$Target, $item, [string]$SourceDir) {
+function Disable-Patch([string]$Kit, $item) {
     if ($item.Id -eq 'WEB_INP_ADD') {
-        $frontend = $script:Catalog | Where-Object { $_.Id -eq 'WEB_INP' }
-        Disable-Patch $Target $frontend $SourceDir
-        Write-Host "  ⚠️ 后端部分请手工移除 api.ts 里的两处新增（详见 add 分支 README）。" -ForegroundColor Yellow
+        $fe = $script:Catalog | Where-Object { $_.Id -eq 'WEB_INP' } | Select-Object -First 1
+        Disable-Patch $Kit $fe
         return
     }
     if ($item.Rollback) {
-        Invoke-PatchScript (Join-Path $SourceDir $item.Rollback) $Target $SourceDir
-        if ($item.Extra -and $item.Extra.Rollback) {
-            Invoke-PatchScript (Join-Path $SourceDir $item.Extra.Rollback) $Target $SourceDir
-        }
+        $null = Ensure-PatchFiles $item.Rollback $item.Branch
+        $local = Join-Path $script:CacheDir ($item.Rollback -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $local)) { throw "无法获取 $($item.Rollback)" }
+        Invoke-Script $local $Kit (Split-Path $local -Parent)
+        return
     }
-    elseif ($item.Script) {
-        Copy-TestScript $Target $SourceDir $item.Script -Remove
-    }
+    if ($item.Marker) { Set-TestPatch $Kit $item.Marker -Remove }
 }
 
 # ---------------------------------------------------------------- 菜单
-function Show-Menu([string]$Target, [string]$SourceDir) {
+function Show-Menu([string]$Kit) {
     while ($true) {
-        Show-Status $Target
+        Show-Status $Kit
         Write-Host ""
-        Write-Host "  输入补丁 ID 启用（如 WEB_EXP）；ID 前加 - 回滚（如 -WEB_EXP）；输入 q 退出。" -ForegroundColor Gray
-        Write-Host "  例：WEB_INP_ADD 会自动卸载 WEB_INP；-WEB_INP 反之。" -ForegroundColor Gray
-        $choice = Read-Host "  > "
-        $choice = $choice.Trim()
+        Write-Host "  输入补丁 ID 启用；ID 前加 - 回滚；r 重新同步清单；q 退出。" -ForegroundColor Gray
+        $choice = (Read-Host "  > ").Trim()
         if (-not $choice) { continue }
-        if ($choice -eq 'q' -or $choice -eq 'Q') { break }
+        if ($choice -eq 'q') { break }
+        if ($choice -eq 'r') { $script:NoSync = $false; Sync-Catalog; continue }
 
         $isRollback = $choice.StartsWith('-')
         $id = if ($isRollback) { $choice.Substring(1) } else { $choice }
         $item = $script:Catalog | Where-Object { $_.Id -ieq $id } | Select-Object -First 1
-        if (-not $item) {
-            Write-Host "  未知补丁 ID：$id" -ForegroundColor Red
-            continue
-        }
-        Write-Head "$(if ($isRollback) { '回滚' } else { '启用' }) $($item.Branch)/$($item.Id)"
+        if (-not $item) { Write-Host "  未知补丁：$id" -ForegroundColor Red; continue }
+
+        $action = if ($isRollback) { '回滚' } else { '启用' }
+        Write-Head "$action $($item.Branch)/$($item.Id)"
         try {
-            if ($isRollback) { Disable-Patch $Target $item $SourceDir }
-            else { Enable-Patch $Target $item $SourceDir }
+            if ($isRollback) { Disable-Patch $Kit $item } else { Enable-Patch $Kit $item }
         } catch {
             Write-Host "  操作失败：$($_.Exception.Message)" -ForegroundColor Red
         }
@@ -277,24 +410,22 @@ function Show-Menu([string]$Target, [string]$SourceDir) {
 }
 
 # ---------------------------------------------------------------- 入口
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $Source) { $Source = $scriptDir }
+Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 
-if (-not $Target) {
-    $sibling = Join-Path $scriptDir 'cst-pilot'
-    if (Test-Kit $sibling) { $Target = $sibling }
-    elseif (Test-Kit $scriptDir) { $Target = $scriptDir }
+$Target = Resolve-Target
+if (-not (Test-Kit $Target)) {
+    Write-Host "所选目录不像 cst-pilot：$Target" -ForegroundColor Red
+    Write-Host "（应包含 agent/home/extensions/oauth/oa.ts）" -ForegroundColor Red
+    exit 1
 }
-if (-not $Target) { Write-Host '没找到 cst-pilot，请用 -Target 指定。' -ForegroundColor Red; exit 1 }
-if (-not (Test-Kit $Target)) { Write-Host "目标目录不像 cst-pilot：$Target" -ForegroundColor Red; exit 1 }
 $Target = (Resolve-Path -LiteralPath $Target).Path
 
-Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 Write-Host "目标   $Target"
-Write-Host "补丁源 $Source"
+if (-not (Test-Path $script:CacheDir)) { New-Item -ItemType Directory -Path $script:CacheDir -Force | Out-Null }
+Write-Host "缓存   $script:CacheDir"
 
-if ($NonInteractive) {
-    Show-Status $Target
-} else {
-    Show-Menu $Target $Source
-}
+Write-Host -NoNewline "同步清单… "
+Sync-Catalog
+Write-Host $script:SyncInfo -ForegroundColor Gray
+
+if ($NonInteractive) { Show-Status $Target } else { Show-Menu $Target }
