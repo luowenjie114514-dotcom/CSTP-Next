@@ -1,30 +1,30 @@
 /**
- * CSTP Next · 会话导出（浏览器下载版 + 导出选项页接管）。
+ * CSTP Next · 会话导出（浏览器下载版）。
  *
- * 两处生效：
- * 1. 会话右键菜单新增「导出 html（CSTP Next）」—— 快捷导出，直接下载。
- * 2. /s/<id>/export 导出页 —— 接管原「导出选项」面板，保留原有选项
- *    （格式 / 主题 / 包含思考过程 / 包含工具调用结果），
- *    但「生成并保存」改为浏览器下载，由用户选择保存位置。
+ * 设计要点（针对真实故障做的取舍）：
  *
- * 为什么接管后端导出：
- * 后端 /api/sessions/<id>/exports 依赖 puppeteer-core 驱动本机 Edge/Chrome。
- * 管理员权限或受限环境下常报 export_browser_launch_failed；
- * 且导出目录固定为 artifacts/<日期>/sessions/，用户无法选择位置。
+ * 1. 为什么不用后端 /exports 接口
+ *    它用 puppeteer-core 驱动本机 Edge/Chrome 渲染，实测报
+ *    export_browser_launch_failed；且保存目录固定为
+ *    artifacts/<日期>/sessions/，使用者无法选择位置。
  *
- * 本实现：GET /api/sessions/<id> 取快照 → 页面内生成自包含 HTML →
- * Blob + <a download> 触发浏览器「另存为」。
+ * 2. 为什么用「捕获阶段事件拦截」而不是「替换 DOM」
+ *    导出页由 React 渲染，重渲染会把注入的节点冲掉（实测有 1.5s 空窗），
+ *    期间点到的是原来那个失败的「生成并保存」。
+ *    监听器挂在 document 上，capture 阶段先手，React 无论如何重渲染都拦得住。
+ *    DOM 改写只作为「视觉呈现」，用 MutationObserver 立即补回，不再是功能依赖。
  *
- * 安全：只读 GET；内容全部 HTML 转义；不删除任何 React 管理的 DOM 节点。
+ * 3. 右键菜单
+ *    单选 → 跳转 /s/<id>/export 导出选项页
+ *    多选 → 逐个会话各下载一个文件（多文件导出）
  */
 (() => {
 	const MENU = ".session-menu";
 	const ITEM = '[role="menuitem"]';
 	const MARK = "data-cstpn-export";
 	const ROW = "[data-session-id]";
-	const TICK_MS = 400;
+	const TICK_MS = 300;
 
-	// 导出页选择器
 	const EXPORT_PAGE = "main.export-workspace";
 	const EXPORT_FIELDSET = ".export-controls fieldset";
 	const TAKEN = "data-cstpn-taken";
@@ -55,7 +55,28 @@
 		document.head.appendChild(style);
 	}
 
-	function toast(message, tone) {
+	function injectPageStyle() {
+		if (document.getElementById("cstpn-page-style")) return;
+		const style = document.createElement("style");
+		style.id = "cstpn-page-style";
+		style.textContent = `
+.cstpn-panel{display:grid;gap:14px}
+.cstpn-field{display:grid;gap:6px;font-size:13px;line-height:1.5}
+.cstpn-field-label{font-weight:600;opacity:.78}
+.cstpn-segmented{display:inline-flex;padding:3px;border-radius:10px;background:rgba(127,127,127,.13);gap:2px}
+.cstpn-seg{border:none;background:transparent;color:inherit;font:inherit;font-size:13px;padding:6px 14px;border-radius:8px;cursor:pointer;opacity:.72}
+.cstpn-seg[data-active="true"]{background:rgba(127,127,127,.28);opacity:1;font-weight:600}
+.cstpn-seg:hover{opacity:1}
+.cstpn-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.cstpn-check input{margin:0;cursor:pointer}
+.cstpn-generate{justify-self:start;align-items:center;gap:8px;min-height:38px;padding:10px 20px;border:none;border-radius:10px;color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:13px;font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
+.cstpn-generate:disabled{opacity:.6;cursor:default}
+.cstpn-note{font-size:13px;color:var(--chat-muted,#6b7280);margin:0}
+`;
+		document.head.appendChild(style);
+	}
+
+	function toast(message, tone, holdMs) {
 		injectStyle();
 		if (!state.toast) {
 			const el = document.createElement("div");
@@ -77,6 +98,7 @@
 		text.textContent = message;
 		el.appendChild(text);
 		el.hidden = false;
+		if (holdMs) window.setTimeout(clearToast, holdMs);
 	}
 
 	function clearToast() {
@@ -144,59 +166,46 @@
 				if (opts.includeThinking) parts.push(`〔思考〕\n${part.thinking}`);
 			} else if (part.type === "toolCall") {
 				if (!opts.includeTools) continue;
-				const name = part.name ?? "tool";
 				let args = "";
 				try {
 					args = JSON.stringify(part.arguments ?? {}, null, 2);
 				} catch {
 					args = "";
 				}
-				parts.push(`〔调用 ${name}〕\n${args}`);
+				parts.push(`〔调用 ${part.name ?? "tool"}〕\n${args}`);
 			}
 		}
 		return parts.join("\n\n");
 	}
 
-	const LIGHT = {
-		bodyBg: "#fafbfc",
-		bodyInk: "#1a2024",
-		userBg: "rgba(59,130,246,.07)",
-		userBorder: "rgba(59,130,246,.28)",
-		asstBg: "rgba(127,127,127,.07)",
-		cardBorder: "rgba(127,127,127,.22)",
-		codeBg: "rgba(127,127,127,.16)",
-		hr: "rgba(127,127,127,.34)",
-	};
-	const DARK = {
-		bodyBg: "#16191d",
-		bodyInk: "#e8ecef",
-		userBg: "rgba(96,165,250,.10)",
-		userBorder: "rgba(96,165,250,.34)",
-		asstBg: "rgba(148,163,184,.08)",
-		cardBorder: "rgba(148,163,184,.20)",
-		codeBg: "rgba(148,163,184,.18)",
-		hr: "rgba(148,163,184,.28)",
+	const THEMES = {
+		light: {
+			bodyBg: "#fafbfc", bodyInk: "#1a2024",
+			userBg: "rgba(59,130,246,.07)", userBorder: "rgba(59,130,246,.28)",
+			asstBg: "rgba(127,127,127,.07)", cardBorder: "rgba(127,127,127,.22)",
+			codeBg: "rgba(127,127,127,.16)", hr: "rgba(127,127,127,.34)",
+		},
+		dark: {
+			bodyBg: "#16191d", bodyInk: "#e8ecef",
+			userBg: "rgba(96,165,250,.10)", userBorder: "rgba(96,165,250,.34)",
+			asstBg: "rgba(148,163,184,.08)", cardBorder: "rgba(148,163,184,.20)",
+			codeBg: "rgba(148,163,184,.18)", hr: "rgba(148,163,184,.28)",
+		},
 	};
 
 	const ROLE_LABEL = {
-		user: "用户",
-		assistant: "助手",
-		toolResult: "工具结果",
-		branchSummary: "分支总结",
+		user: "用户", assistant: "助手", toolResult: "工具结果", branchSummary: "分支总结",
 	};
 
 	function buildHtml(sessions, opts) {
-		const t = opts.theme === "light" ? LIGHT : DARK;
+		const t = THEMES[opts.theme === "light" ? "light" : "dark"];
 		const now = new Date();
 		const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
 		const blocks = sessions
 			.map((snapshot) => {
 				const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
-				const messages = entries
-					.map((entry) => entry?.message ?? entry)
-					.filter((message) => message && typeof message === "object");
-
+				const messages = entries.map((e) => e?.message ?? e).filter((m) => m && typeof m === "object");
 				const title =
 					snapshot?.title ||
 					messages.find((m) => typeof m.content === "string")?.content?.slice(0, 60) ||
@@ -206,12 +215,11 @@
 				const rows = messages
 					.map((message) => {
 						const role = message.role ?? "unknown";
-						const label = ROLE_LABEL[role] ?? role;
 						const body = messageText(message, opts).trim();
 						if (!body) return "";
 						const time = message.timestamp ? new Date(message.timestamp).toLocaleString("zh-CN") : "";
 						return `<section class="msg msg-${escapeHtml(role)}">
-<header><span class="role">${escapeHtml(label)}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</header>
+<header><span class="role">${escapeHtml(ROLE_LABEL[role] ?? role)}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</header>
 <pre>${escapeHtml(body)}</pre>
 </section>`;
 					})
@@ -260,8 +268,30 @@ ${blocks}
 </html>`;
 	}
 
+	function buildJson(snapshots, opts) {
+		return JSON.stringify(
+			snapshots.map((snapshot) => ({
+				id: snapshot?.id,
+				title: snapshot?.title,
+				exportedAt: new Date().toISOString(),
+				options: { includeThinking: opts.includeThinking, includeTools: opts.includeTools },
+				messages: (Array.isArray(snapshot?.entries) ? snapshot.entries : [])
+					.map((e) => e?.message ?? e)
+					.filter((m) => m && typeof m === "object")
+					.map((m) => ({
+						role: m.role,
+						timestamp: m.timestamp ?? null,
+						content: messageText(m, opts).trim(),
+					}))
+					.filter((m) => m.content),
+			})),
+			null,
+			2,
+		);
+	}
+
 	// ---------------------------------------------------------------- 下载
-	function safeFileName(title) {
+	function fileBase(title) {
 		const cleaned = String(title ?? "会话")
 			.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
 			.replace(/\s+/g, " ")
@@ -272,7 +302,7 @@ ${blocks}
 		return `${name}-${stamp}`;
 	}
 
-	function download(content, filename, mime) {
+	function saveFile(content, filename, mime) {
 		const blob = new Blob([content], { type: mime || "text/html;charset=utf-8" });
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement("a");
@@ -289,78 +319,48 @@ ${blocks}
 				/* 忽略 */
 			}
 			URL.revokeObjectURL(url);
-		}, 1500);
+		}, 2000);
 	}
 
-	// ---------------------------------------------------------------- 主流程
+	const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+	function titleOf(snapshot) {
+		const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+		const firstUser = entries
+			.map((e) => e?.message ?? e)
+			.find((m) => m?.role === "user" && typeof m?.content === "string");
+		return snapshot?.title || firstUser?.content?.slice(0, 60) || snapshot?.id || "会话";
+	}
+
+	/**
+	 * 导出会话。
+	 * 单会话 → 一个文件；多会话 → 每个会话各自一个文件（多文件导出）。
+	 */
 	async function runExport(sessionIds, opts) {
 		if (state.busy) return;
 		if (!sessionIds || !sessionIds.length) {
-			toast("没有可导出的会话", "error");
-			window.setTimeout(clearToast, 2600);
+			toast("没有可导出的会话", "error", 2600);
 			return;
 		}
 		state.busy = true;
-		const total = sessionIds.length;
 		const useOpts = { ...options, ...(opts || {}) };
+		const total = sessionIds.length;
+		const ext = useOpts.format === "json" ? "json" : "html";
+		const mime = useOpts.format === "json" ? "application/json;charset=utf-8" : "text/html;charset=utf-8";
 
 		try {
-			const snapshots = [];
-			for (let i = 0; i < sessionIds.length; i += 1) {
-				toast(total > 1 ? `正在导出 ${i + 1}/${total}…` : "正在导出会话…", "info");
-				snapshots.push(await fetchSnapshot(sessionIds[i]));
+			for (let i = 0; i < total; i += 1) {
+				toast(total > 1 ? `正在导出 ${i + 1}/${total}…` : "正在导出…", "info");
+				const snapshot = await fetchSnapshot(sessionIds[i]);
+				const content =
+					useOpts.format === "json" ? buildJson([snapshot], useOpts) : buildHtml([snapshot], useOpts);
+				saveFile(content, `${fileBase(titleOf(snapshot))}.${ext}`, mime);
+				// 多文件时留出间隔，避免浏览器把连续下载判定为弹窗而拦掉。
+				if (i < total - 1) await sleep(700);
 			}
-
-			const first = snapshots[0];
-			const title =
-				first?.title ||
-				(Array.isArray(first?.entries)
-					? first.entries.find((e) => e?.message?.role === "user")?.message?.content
-					: "") ||
-				"会话";
-			const base = safeFileName(String(title));
-
-			let content;
-			let extension;
-			let mime;
-			if (useOpts.format === "json") {
-				const payload = snapshots.map((snapshot) => ({
-					id: snapshot?.id,
-					title: snapshot?.title,
-					exportedAt: new Date().toISOString(),
-					options: {
-						includeThinking: useOpts.includeThinking,
-						includeTools: useOpts.includeTools,
-					},
-					messages: (Array.isArray(snapshot?.entries) ? snapshot.entries : [])
-						.map((entry) => entry?.message ?? entry)
-						.filter((m) => m && typeof m === "object")
-						.map((m) => {
-							const text = messageText(m, useOpts).trim();
-							return { role: m.role, timestamp: m.timestamp ?? null, content: text };
-						})
-						.filter((m) => m.content),
-				}));
-				content = JSON.stringify(total > 1 ? payload : payload[0], null, 2);
-				extension = "json";
-				mime = "application/json;charset=utf-8";
-			} else {
-				content = buildHtml(snapshots, useOpts);
-				extension = "html";
-				mime = "text/html;charset=utf-8";
-			}
-
-			const filename =
-				total > 1
-					? `会话导出-${total}个-${base.replace(/^[^-]*-/, "")}.${extension}`
-					: `${base}.${extension}`;
-
-			download(content, filename, mime);
-			toast(`已导出 ${total} 个会话，请在浏览器保存对话框中确认位置`, "ok");
-			window.setTimeout(clearToast, 5000);
+			toast(`已导出 ${total} 个文件，请在浏览器保存对话框中确认位置`, "ok", 5000);
 		} catch (error) {
-			toast(error instanceof Error && error.message ? error.message : "导出失败，请重试", "error");
-			window.setTimeout(clearToast, 6000);
+			toast(error instanceof Error && error.message ? error.message : "导出失败，请重试", "error", 6000);
 		} finally {
 			state.busy = false;
 		}
@@ -369,19 +369,15 @@ ${blocks}
 	// ---------------------------------------------------------------- 右键菜单
 	function icon() {
 		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-		svg.setAttribute("width", "18");
-		svg.setAttribute("height", "18");
-		svg.setAttribute("viewBox", "0 0 24 24");
-		svg.setAttribute("fill", "none");
-		svg.setAttribute("stroke", "currentColor");
-		svg.setAttribute("stroke-width", "2");
-		svg.setAttribute("stroke-linecap", "round");
-		svg.setAttribute("stroke-linejoin", "round");
-		svg.setAttribute("aria-hidden", "true");
+		for (const [k, v] of Object.entries({
+			width: "18", height: "18", viewBox: "0 0 24 24", fill: "none",
+			stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round",
+			"stroke-linejoin": "round", "aria-hidden": "true",
+		})) svg.setAttribute(k, v);
 		for (const d of ["M12 3v10", "M8 9l4 4 4-4", "M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"]) {
-			const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-			path.setAttribute("d", d);
-			svg.appendChild(path);
+			const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+			p.setAttribute("d", d);
+			svg.appendChild(p);
 		}
 		return svg;
 	}
@@ -393,33 +389,39 @@ ${blocks}
 		button.className = "sidebar-account-item";
 		button.setAttribute(MARK, "");
 		button.appendChild(icon());
-		button.appendChild(document.createTextNode("导出 html（CSTP Next）"));
+		button.appendChild(document.createTextNode("导出（CSTP Next）"));
 		button.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
 			const ids = targetSessionIds();
-			void runExport(ids, options);
+			if (ids.length === 1) {
+				// 单选：进入导出选项页
+				location.assign(`/s/${encodeURIComponent(ids[0])}/export`);
+			} else if (ids.length > 1) {
+				// 多选：多文件导出
+				void runExport(ids, options);
+			} else {
+				toast("没有识别到会话", "error", 2600);
+			}
 		});
 		return button;
 	}
 
 	function ensureMenu() {
 		const menu = document.querySelector(MENU);
-		if (!menu) return;
-		if (menu.querySelector(`[${MARK}]`)) return;
+		if (!menu || menu.querySelector(`[${MARK}]`)) return;
 		injectStyle();
 		const item = buildItem(menu);
 		const divider = menu.querySelector(".session-menu-divider");
-		if (divider) {
-			menu.insertBefore(item, divider);
-		} else {
+		if (divider) menu.insertBefore(item, divider);
+		else {
 			const del = menu.querySelector(`${ITEM}.sidebar-menu-delete`);
 			if (del) menu.insertBefore(item, del);
 			else menu.appendChild(item);
 		}
 	}
 
-	// ---------------------------------------------------------------- 导出页接管
+	// ---------------------------------------------------------------- 导出页视觉接管
 	function fieldRow(labelText, node) {
 		const wrap = document.createElement("div");
 		wrap.className = "cstpn-field";
@@ -430,11 +432,10 @@ ${blocks}
 		return wrap;
 	}
 
-	function segmented(name, items, value, onChange) {
+	function segmented(items, value, onChange) {
 		const group = document.createElement("div");
 		group.className = "cstpn-segmented";
 		group.setAttribute("role", "radiogroup");
-		group.setAttribute("aria-label", name);
 		const buttons = [];
 		for (const item of items) {
 			const b = document.createElement("button");
@@ -444,19 +445,13 @@ ${blocks}
 			b.dataset.value = item.id;
 			b.setAttribute("role", "radio");
 			b.addEventListener("click", () => {
-				for (const x of buttons) {
-					x.dataset.active = x === b ? "true" : "false";
-					x.setAttribute("aria-checked", x === b ? "true" : "false");
-				}
+				for (const x of buttons) x.dataset.active = x === b ? "true" : "false";
 				onChange(item.id);
 			});
 			buttons.push(b);
 			group.appendChild(b);
 		}
-		for (const b of buttons) {
-			b.dataset.active = b.dataset.value === value ? "true" : "false";
-			b.setAttribute("aria-checked", b.dataset.active === "true" ? "true" : "false");
-		}
+		for (const b of buttons) b.dataset.active = b.dataset.value === value ? "true" : "false";
 		return group;
 	}
 
@@ -473,118 +468,56 @@ ${blocks}
 		return label;
 	}
 
-	function injectPageStyle() {
-		if (document.getElementById("cstpn-page-style")) return;
-		const style = document.createElement("style");
-		style.id = "cstpn-page-style";
-		style.textContent = `
-.cstpn-panel{display:grid;gap:var(--space-group,16px)}
-.cstpn-field{display:grid;gap:6px;font-size:var(--font-ui,13px);line-height:var(--line-ui,1.5)}
-.cstpn-field-label{font-weight:600;opacity:.78}
-.cstpn-segmented{display:inline-flex;padding:3px;border-radius:10px;background:rgba(127,127,127,.13);gap:2px}
-.cstpn-seg{border:none;background:transparent;color:inherit;font:inherit;font-size:var(--font-ui,13px);padding:6px 14px;border-radius:8px;cursor:pointer;opacity:.72}
-.cstpn-seg[data-active="true"]{background:rgba(127,127,127,.28);opacity:1;font-weight:600}
-.cstpn-seg:hover{opacity:1}
-.cstpn-check{display:flex;align-items:center;gap:8px;font-size:var(--font-ui,13px);cursor:pointer}
-.cstpn-check input{margin:0;cursor:pointer}
-.cstpn-generate{justify-self:start;align-items:center;gap:var(--space-inline,8px);min-height:var(--control-field,38px);padding:10px var(--space-section,20px);border:none;border-radius:var(--radius-control,10px);color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:var(--font-ui,13px);font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
-.cstpn-generate:disabled{opacity:.6;cursor:default}
-.cstpn-note{font-size:var(--font-ui,13px);color:var(--chat-muted,#6b7280);margin:0}
-.${MARK}-badge{font-weight:400;opacity:.6;font-size:.8em;margin-left:.4em}
-`;
-		document.head.appendChild(style);
-	}
-
-	/** 接管导出页的「导出选项」面板。 */
-	function ensureExportPage() {
+	function takeOverExportPage() {
 		const main = document.querySelector(EXPORT_PAGE);
 		if (!main) return;
 
-		// 1) 标题加 (CSTP Next) 标识
+		injectStyle();
 		const h1 = main.querySelector(".export-toolbar h1");
 		if (h1 && !h1.querySelector(`.${MARK}-badge`)) {
-			injectStyle();
 			const badge = document.createElement("span");
 			badge.className = `${MARK}-badge`;
 			badge.textContent = "（CSTP Next）";
 			h1.appendChild(badge);
 		}
 
-		// 2) 接管导出选项面板
 		const fieldset = main.querySelector(EXPORT_FIELDSET);
 		if (!fieldset || fieldset.hasAttribute(TAKEN)) return;
 
 		injectPageStyle();
 		fieldset.setAttribute(TAKEN, "");
-		// 保留 legend 文案，清空其余内容（原按钮与复选框都替换掉）
-		const legend = fieldset.querySelector("legend");
-		const legendText = legend?.textContent ?? "导出选项";
+		const legendText = fieldset.querySelector("legend")?.textContent ?? "导出选项";
 		while (fieldset.firstChild) fieldset.removeChild(fieldset.firstChild);
 
 		const legendEl = document.createElement("legend");
 		legendEl.textContent = legendText;
 		fieldset.appendChild(legendEl);
 
+		const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
 		const panel = document.createElement("div");
 		panel.className = "cstpn-panel";
 
-		const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
-
 		panel.appendChild(
-			fieldRow(
-				"格式",
-				segmented(
-					"格式",
-					[
-						{ id: "html", label: "离线 HTML" },
-						{ id: "json", label: "JSON 数据" },
-					],
-					options.format,
-					(value) => {
-						options.format = value;
-					},
-				),
-			),
-		);
-
-		panel.appendChild(
-			fieldRow(
-				"主题",
-				segmented(
-					"主题",
-					[
-						{ id: "light", label: "日间" },
-						{ id: "dark", label: "夜间" },
-					],
-					options.theme,
-					(value) => {
-						options.theme = value;
-					},
-				),
-			),
-		);
-
-		panel.appendChild(
-			checkbox("包含思考过程", options.includeThinking, (v) => {
-				options.includeThinking = v;
-			}),
+			fieldRow("格式", segmented([
+				{ id: "html", label: "离线 HTML" },
+				{ id: "json", label: "JSON 数据" },
+			], options.format, (v) => { options.format = v; })),
 		);
 		panel.appendChild(
-			checkbox("包含工具调用结果", options.includeTools, (v) => {
-				options.includeTools = v;
-			}),
+			fieldRow("主题", segmented([
+				{ id: "light", label: "日间" },
+				{ id: "dark", label: "夜间" },
+			], options.theme, (v) => { options.theme = v; })),
 		);
+		panel.appendChild(checkbox("包含思考过程", options.includeThinking, (v) => { options.includeThinking = v; }));
+		panel.appendChild(checkbox("包含工具调用结果", options.includeTools, (v) => { options.includeTools = v; }));
 
 		const button = document.createElement("button");
 		button.type = "button";
 		button.className = "cstpn-generate";
 		button.textContent = "导出并下载";
 		button.addEventListener("click", () => {
-			if (!sessionId) {
-				toast("未能识别会话 ID", "error");
-				window.setTimeout(clearToast, 3000);
-				return;
-			}
+			if (!sessionId) return toast("未能识别会话 ID", "error", 3000);
 			void runExport([sessionId], { ...options });
 		});
 		panel.appendChild(button);
@@ -597,24 +530,70 @@ ${blocks}
 		fieldset.appendChild(panel);
 	}
 
+	// ---------------------------------------------------------------- 关键：捕获阶段拦截
+	/**
+	 * 在原「生成并保存」按钮的点击到达 React 之前拦截。
+	 * 监听器挂在 document 上，React 重渲染换掉按钮也不影响拦截。
+	 */
+	function interceptExportClick(event) {
+		try {
+			const target = event.target;
+			if (!target?.closest) return;
+			const main = target.closest(EXPORT_PAGE);
+			if (!main) return;
+
+			// 命中原始「生成并保存」按钮（或其后代）
+			const origin = target.closest(".export-generate");
+			if (!origin) return;
+
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation();
+
+			const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
+			if (!sessionId) {
+				toast("未能识别会话 ID", "error", 3000);
+				return;
+			}
+			void runExport([sessionId], { ...options });
+		} catch {
+			/* 不干扰其他交互 */
+		}
+	}
+
 	// ---------------------------------------------------------------- 调度
+	let observer = null;
+
 	function tick() {
 		try {
 			ensureMenu();
-			ensureExportPage();
+			takeOverExportPage();
 		} catch {
 			/* 静默跳过 */
 		}
 	}
 
-	window.__cstpnExport = { runExport, targetSessionIds, buildHtml, options };
-
+	// 监听器立即挂载——这是功能保障，不依赖任何 DOM 时机
+	document.addEventListener("click", interceptExportClick, true);
 	document.addEventListener("contextmenu", trackContextMenu, true);
 
+	// DOM 变化立即补回视觉接管（不是功能依赖，只是让界面不闪回旧样式）
+	function startObserver() {
+		if (observer || typeof MutationObserver === "undefined") return;
+		observer = new MutationObserver(() => tick());
+		observer.observe(document.documentElement, { childList: true, subtree: true });
+	}
+
+	window.__cstpnExport = { runExport, targetSessionIds, buildHtml, buildJson, options };
+
 	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", tick, { once: true });
+		document.addEventListener("DOMContentLoaded", () => {
+			tick();
+			startObserver();
+		}, { once: true });
 	} else {
 		tick();
+		startObserver();
 	}
 	window.setInterval(tick, TICK_MS);
 })();
