@@ -511,6 +511,10 @@ if (Test-Path -LiteralPath $animFile) {
     } catch { }
 }
 
+# 动画结束后停顿，避免后续输出立刻把终态推走
+Start-Sleep -Milliseconds 700
+
+Write-Host ""
 Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------- 接收后台清单

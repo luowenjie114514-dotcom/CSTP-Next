@@ -155,14 +155,7 @@ function Write-ColoredLine16([string]$Line) {
     $len = $Line.Length
     $sb = New-Object System.Text.StringBuilder
     $curColor = $null
-    $curIdx = 0
 
-    $flush = {
-        if ($sb.Length -gt 0 -and $null -ne $curColor) {
-            Write-Host $sb.ToString() -ForegroundColor $curColor -NoNewline
-            [void]$sb.Clear()
-        }
-    }
 
     for ($i = 0; $i -lt $len; $i++) {
         $ch = $Line[$i]
@@ -348,14 +341,10 @@ function Show-CstpnBootLogo {
         Start-Sleep -Milliseconds ([int](90 * $Speed))
     }
 
-    # ---- 收尾：显式重绘完整 Next，确保最后画面是渐变色 ----
-    # 循环最后一帧虽然已是完整 Next，但后续输出可能重置颜色状态，
-    # 这里再画一次，保证视觉终态稳定。
-    Clear-Host
-    $tcFinal = Enable-VirtualTerminal
-    foreach ($line in $next) {
-        if ($tcFinal) { Write-RawLine (Format-ColorLine $line) }
-        else { Write-ColoredLine16 $line }
-    }
+    # ---- 收尾：复用 Write-Frame（与中间帧同一路径，外观一致）----
+    Write-Frame -Lines $next
+    # 停留片刻，让终态稳定可见（后续输出不会立刻把画面推走）
+    Start-Sleep -Milliseconds ([int](400 * $Speed))
     Write-Host ''
 }
+
