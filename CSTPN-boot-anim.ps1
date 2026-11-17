@@ -22,17 +22,31 @@ $script:TrueColorReady = $null
 function Enable-VirtualTerminal {
     if ($null -ne $script:TrueColorReady) { return $script:TrueColorReady }
 
-    # 非交互输出（重定向/管道）直接禁用，避免写入转义码
+    # 1) PowerShell 官方能力标志：最可靠，Windows Terminal / 新版 conhost 均为 true
     try {
-        if ([Console]::IsOutputRedirected) {
-            $script:TrueColorReady = $false
-            return $false
+        if ($Host.UI.SupportsVirtualTerminal) {
+            # 仍要尝试开启 VT 模式（老 conhost 可能默认关闭）
+            $null = Enable-ConsoleVtMode
+            $script:TrueColorReady = $true
+            return $true
         }
-    } catch {
-        $script:TrueColorReady = $false
-        return $false
-    }
+    } catch { }
 
+    # 2) 官方标志不可用时，退回 Win32 API 探测
+    try {
+        if (Enable-ConsoleVtMode) {
+            $script:TrueColorReady = $true
+            return $true
+        }
+    } catch { }
+
+    $script:TrueColorReady = $false
+    return $false
+}
+
+# 通过 SetConsoleMode 打开 ENABLE_VIRTUAL_TERMINAL_PROCESSING
+# 返回 true 表示当前确实具备 VT（已开启或本来就开着）
+function Enable-ConsoleVtMode {
     try {
         if (-not ('CstpnConsole' -as [type])) {
             Add-Type -Namespace '' -Name 'CstpnConsole' -MemberDefinition @'
@@ -45,24 +59,17 @@ public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMo
 '@ -ErrorAction Stop
         }
 
-        $handle = [CstpnConsole]::GetStdHandle(-11)   # STD_OUTPUT_HANDLE
+        $handle = [CstpnConsole]::GetStdHandle(-11)
+        if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { return $false }
+
         $mode = [uint32]0
-        if (-not [CstpnConsole]::GetConsoleMode($handle, [ref]$mode)) {
-            $script:TrueColorReady = $false
-            return $false
-        }
+        if (-not [CstpnConsole]::GetConsoleMode($handle, [ref]$mode)) { return $false }
 
         $ENABLE_VT = 0x0004
-        if (($mode -band $ENABLE_VT) -eq 0) {
-            if (-not [CstpnConsole]::SetConsoleMode($handle, $mode -bor $ENABLE_VT)) {
-                $script:TrueColorReady = $false
-                return $false
-            }
-        }
-        $script:TrueColorReady = $true
-        return $true
+        if (($mode -band $ENABLE_VT) -ne 0) { return $true }   # 已开启
+
+        return [CstpnConsole]::SetConsoleMode($handle, $mode -bor $ENABLE_VT)
     } catch {
-        $script:TrueColorReady = $false
         return $false
     }
 }
