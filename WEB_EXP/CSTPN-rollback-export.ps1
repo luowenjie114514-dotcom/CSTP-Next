@@ -1,13 +1,12 @@
-﻿# CSTPN Rollback · 一键撤回 CSTP Next 对 cst-pilot Web 端的修改
+﻿# CSTPN Rollback · WEB_EXP：撤回会话导出增强
 #
 # 撤回内容：
-#   1. 删除 CSTPN-session-export.js / CSTPN-cstoa-open-auth.js
+#   1. 删除 CSTPN-session-export.js
 #   2. 移除 index.html 里对应的 <script> 引用
-#   3. 若存在 backup，优先用备份还原 index.html
 #
 # 用法：
-#   .\CSTPN-rollback-web-enhance.ps1 -Target 'C:\Users\ANWEN\Desktop\cst-pilot'
-#   .\CSTPN-rollback-web-enhance.ps1 -Target '...' -DryRun
+#   .\CSTPN-rollback-export.ps1 -Target 'C:\Users\ANWEN\Desktop\cst-pilot'
+#   .\CSTPN-rollback-export.ps1 -Target '...' -DryRun
 
 [CmdletBinding()]
 param(
@@ -20,11 +19,8 @@ $ErrorActionPreference = 'Stop'
 $script:RollbackVersion = '1.0.0'
 $script:StaticRel = 'agent/home/extensions/web/static'
 $script:IndexRel = "$($script:StaticRel)/index.html"
-
-$script:Scripts = @(
-    @{ Name = 'CSTPN-session-export.js';   Tag = '<script type="module" src="/CSTPN-session-export.js"></script>' },
-    @{ Name = 'CSTPN-cstoa-open-auth.js'; Tag = '<script type="module" src="/CSTPN-cstoa-open-auth.js"></script>' }
-)
+$script:ScriptName = 'CSTPN-session-export.js'
+$script:IndexTag = '<script type="module" src="/CSTPN-session-export.js"></script>'
 
 function Write-Head([string]$Text) {
     Write-Host ""
@@ -46,10 +42,6 @@ function Test-Kit([string]$Path) {
     return (Test-Path -LiteralPath (Join-Path $Path 'agent/home/extensions/oauth/oa.ts') -PathType Leaf)
 }
 
-# ---------------------------------------------------------------------------
-# 定位
-# ---------------------------------------------------------------------------
-
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $Target) {
     $sibling = Join-Path $scriptDir 'cst-pilot'
@@ -60,7 +52,7 @@ if (-not $Target) { Fail "没找到 cst-pilot。请用 -Target 指定路径。" 
 if (-not (Test-Kit $Target)) { Fail "目标目录不像 cst-pilot：$Target" }
 $Target = (Resolve-Path -LiteralPath $Target).Path
 
-Write-Head "CSTPN Web 增强回滚 v$script:RollbackVersion"
+Write-Head "CSTPN WEB_EXP 回滚 v$script:RollbackVersion"
 Write-Item "目标   $Target"
 if ($DryRun) { Write-Item '模式   预演（不写文件）' 'Yellow' }
 
@@ -68,21 +60,15 @@ $encoding = New-Object System.Text.UTF8Encoding($false)
 $indexFull = Join-Path $Target $script:IndexRel
 $actions = New-Object System.Collections.ArrayList
 
-# 待删除的脚本
-foreach ($script in $script:Scripts) {
-    $path = Join-Path $Target "$($script:StaticRel)/$($script.Name)"
-    if (Test-Path -LiteralPath $path -PathType Leaf) {
-        $actions.Add([pscustomobject]@{ Kind = 'Delete'; Name = $script.Name; Full = $path }) | Out-Null
-    }
+$scriptPath = Join-Path $Target "$($script:StaticRel)/$($script:ScriptName)"
+if (Test-Path -LiteralPath $scriptPath -PathType Leaf) {
+    $actions.Add([pscustomobject]@{ Kind = 'Delete'; Name = $script:ScriptName; Full = $scriptPath }) | Out-Null
 }
 
-# index.html 引用
 $indexNeeds = $false
 if (Test-Path -LiteralPath $indexFull -PathType Leaf) {
     $indexText = [System.IO.File]::ReadAllText($indexFull, $encoding)
-    foreach ($script in $script:Scripts) {
-        if ($indexText.Contains($script.Tag)) { $indexNeeds = $true }
-    }
+    if ($indexText.Contains($script:IndexTag)) { $indexNeeds = $true }
 }
 if ($indexNeeds) {
     $actions.Add([pscustomobject]@{ Kind = 'Index'; Name = $script:IndexRel; Full = $indexFull }) | Out-Null
@@ -90,7 +76,7 @@ if ($indexNeeds) {
 
 Write-Head '回滚计划'
 if ($actions.Count -eq 0) {
-    Write-Host "`n没有检测到 CSTPN Web 增强，已是原始状态。" -ForegroundColor Green
+    Write-Host "`n没有检测到导出增强，已是原始状态。" -ForegroundColor Green
     return
 }
 foreach ($item in $actions) {
@@ -113,7 +99,7 @@ foreach ($item in $actions) {
         $raw = [System.IO.File]::ReadAllBytes($item.Full)
         $hasBom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF)
         $text = [System.IO.File]::ReadAllText($item.Full, $encoding)
-        foreach ($script in $script:Scripts) { $text = $text.Replace($script.Tag, '') }
+        $text = $text.Replace($script:IndexTag, '')
         $out = $encoding.GetBytes($text)
         if ($hasBom) { $out = [byte[]](0xEF, 0xBB, 0xBF) + $out }
         [System.IO.File]::WriteAllBytes($item.Full, $out)
@@ -121,29 +107,14 @@ foreach ($item in $actions) {
     }
 }
 
-# ---------------------------------------------------------------------------
-# 校验
-# ---------------------------------------------------------------------------
-
 Write-Head '校验'
 $problems = 0
-foreach ($script in $script:Scripts) {
-    $path = Join-Path $Target "$($script:StaticRel)/$($script.Name)"
-    if (Test-Path -LiteralPath $path -PathType Leaf) {
-        Write-Item "$($script.Name) 仍存在" 'Red'
-        $problems++
-    }
-}
+if (Test-Path -LiteralPath $scriptPath -PathType Leaf) { Write-Item "$($script:ScriptName) 仍存在" 'Red'; $problems++ }
 if (Test-Path -LiteralPath $indexFull -PathType Leaf) {
-    $indexText = [System.IO.File]::ReadAllText($indexFull, $encoding)
-    $leftover = @($script:Scripts | Where-Object { $indexText.Contains($_.Tag) })
-    if ($leftover.Count -gt 0) {
-        Write-Item "index.html 仍有 $($leftover.Count) 个引用" 'Red'
-        $problems++
+    if ([System.IO.File]::ReadAllText($indexFull, $encoding).Contains($script:IndexTag)) {
+        Write-Item "index.html 仍含引用" 'Red'; $problems++
     }
-    else {
-        Write-Item "index.html 已清理" 'Green'
-    }
+    else { Write-Item "index.html 已清理" 'Green' }
 }
 
 Write-Head '完成'
@@ -151,4 +122,4 @@ if ($problems -gt 0) {
     Write-Host "  仍有 $problems 项未清理干净。" -ForegroundColor Red
     exit 1
 }
-Write-Host '  已撤回 CSTPN Web 增强，重启 CST Pilot 并 Ctrl+F5 后回到原始状态。' -ForegroundColor Green
+Write-Host '  已撤回导出增强，重启 CST Pilot 并 Ctrl+F5 后生效。' -ForegroundColor Green
