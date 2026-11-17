@@ -52,10 +52,10 @@ $script:Catalog = @(
     @{ Id='WEB_INP'; Branch='patch'; Apply='WEB_INP/CSTPN-apply-idimp.ps1'; Rollback='WEB_INP/CSTPN-rollback-idimp.ps1'; Marker='CSTPN-session-import.js'; Name='导入 · 半自动'; Conflicts=@('WEB_INP_ADD') },
     @{ Id='WEB_INP_ADD'; Branch='add'; Apply=''; Rollback=''; Marker=''; Name='导入 · 全自动（需手工合并 api.ts）'; Conflicts=@('WEB_INP') },
     @{ Id='WEB_OTP'; Branch='patch'; Apply='WEB_OTP/CSTPN-apply-otp.ps1'; Rollback='WEB_OTP/CSTPN-rollback-otp.ps1'; Marker='CSTPN-cstoa-open-auth.js'; Name='动态码登录入口'; Conflicts=@() },
-    @{ Id='WEB_SRH'; Branch='patch'; Apply='WEB_SRH/CSTPN-apply-srh.ps1'; Rollback='WEB_SRH/CSTPN-rollback-srh.ps1'; Marker='CSTPN-session-search.js'; Name='会话列表搜索'; Conflicts=@('SESSION-PLUS') },
+    @{ Id='WEB_SRH'; Branch='patch'; Apply='WEB_SRH/CSTPN-apply-srh.ps1'; Rollback='WEB_SRH/CSTPN-rollback-srh.ps1'; Marker='CSTPN-session-search.js'; Name='会话列表搜索'; Conflicts=@() },
     @{ Id='TOOL-SUM'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-tool-summary.js'; Name='工具调用摘要面板'; Conflicts=@() },
     @{ Id='TURN-NAV'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-turn-nav.js'; Name='轮次导航条'; Conflicts=@() },
-    @{ Id='SESSION-PLUS'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-session-plus.js'; Name='置顶/行内重命名/会话内搜索'; Conflicts=@('WEB_SRH') }
+    @{ Id='SESSION-PLUS'; Branch='test'; Apply=''; Rollback=''; Marker='CSTPN-session-plus.js'; Name='置顶/行内重命名/会话内搜索'; Conflicts=@() }
 )
 
 function Write-Head([string]$Text) {
@@ -511,6 +511,10 @@ if (Test-Path -LiteralPath $animFile) {
     } catch { }
 }
 
+# 动画结束后停顿，避免后续输出立刻把终态推走
+Start-Sleep -Milliseconds 700
+
+Write-Host ""
 Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------- 接收后台清单
