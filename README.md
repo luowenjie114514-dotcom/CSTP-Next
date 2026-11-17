@@ -25,4 +25,5 @@
 **CST Pilot** 是计算机维护队（Computer Service Team，**CST**）的便携式专用 Agent，为队员提供现场维修时的 AI 技术支持。
 
 # CSTP Next
-**CSTP Next** 是在不违反安全政策前提下为程序进行的体验优化脚本集，请以 <b>CST Pilot本体</b>：<a href="https://github.com/SCAU-Computer-Serving-Team/cst-pilot/>为标准</a>
+
+**CSTP Next** 是在不违反安全政策前提下为程序进行的体验优化脚本集，请以 [CST Pilot 本体](https://github.com/SCAU-Computer-Serving-Team/cst-pilot/) 为标准。
