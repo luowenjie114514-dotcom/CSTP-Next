@@ -1,29 +1,31 @@
-# CST Pilot
-
-<p align="center">
-  <a href="https://github.com/SCAU-Computer-Serving-Team/cst-pilot/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/SCAU-Computer-Serving-Team/cst-pilot?label=release&logo=github&logoColor=white&labelColor=2b2d31&color=5865f2"></a>
-  <a href="https://github.com/SCAU-Computer-Serving-Team/cst-pilot/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/SCAU-Computer-Serving-Team/cst-pilot/total?label=downloads&logo=github&logoColor=white&labelColor=2b2d31&color=2ea043"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/SCAU-Computer-Serving-Team/cst-pilot?label=license&labelColor=2b2d31&color=2ea043"></a>
-</p>
-
-<p align="center">
-  <img alt="platform" src="https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078d6?logo=windows11&logoColor=white&labelColor=2b2d31">
-  <img alt="node" src="https://img.shields.io/badge/Node.js-22.19%2B-339933?logo=nodedotjs&logoColor=white&labelColor=2b2d31">
-  <img alt="typescript" src="https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white&labelColor=2b2d31">
-  <img alt="react" src="https://img.shields.io/badge/React-19.3-61dafb?logo=react&logoColor=black&labelColor=2b2d31">
-  <img alt="tailwind" src="https://img.shields.io/badge/Tailwind%20CSS-4.3-06b6d4?logo=tailwindcss&logoColor=white&labelColor=2b2d31">
-  <img alt="heroui" src="https://img.shields.io/badge/HeroUI-3.2-8b5cf6?labelColor=2b2d31">
-  <img alt="pi" src="https://img.shields.io/badge/pi-0.85.1-8257e5?labelColor=2b2d31">
-  <img alt="powershell" src="https://img.shields.io/badge/PowerShell-7.6-5391fe?logo=powershell&logoColor=white&labelColor=2b2d31">
-  <img alt="biome" src="https://img.shields.io/badge/Biome-2.3-60a5fa?logo=biome&logoColor=white&labelColor=2b2d31">
-</p>
-
-<p align="center">
-  <b>下载</b>：<a href="https://github.com/SCAU-Computer-Serving-Team/cst-pilot/releases/latest">最新发行版</a> · <a href="https://github.com/SCAU-Computer-Serving-Team/cst-pilot/releases">全部版本</a>
-</p>
-
-**CST Pilot** 是计算机维护队（Computer Service Team，**CST**）的便携式专用 Agent，为队员提供现场维修时的 AI 技术支持。
-
 # CSTP Next
 
 **CSTP Next** 是在不违反安全政策前提下为程序进行的体验优化脚本集，请以 [CST Pilot 本体](https://github.com/SCAU-Computer-Serving-Team/cst-pilot/) 为标准。
+
+> 本仓库的 `main` 分支已清空归档，实际内容在 [`patch`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/patch) 分支。
+
+## 目录
+
+| 目录 | 职责 | 内容 |
+| --- | --- | --- |
+| [`WEB_EXP`](WEB_EXP) | 会话**导出** | 右键菜单「导出（CSTP Next）」，导出后自动打开资源管理器 |
+| [`WEB_OTP`](WEB_OTP) | **登录**相关 | 动态码登录入口、账户页 OA 登录文案 |
+
+## 约定
+
+- 所有脚本统一使用 `CSTPN-` 前缀
+- 每个补丁都配套一个回滚脚本，可独立安装/撤销
+- 安装前自动备份，可重复运行
+- 只改前端静态资源与文案，不触碰登录与导出逻辑；复用后端既有接口，不新增路由、不接受任意路径
+
+## 使用
+
+进入对应目录，按各自 README 操作：
+
+```powershell
+git clone -b patch https://github.com/luowenjie114514-dotcom/CSTP-Next.git
+cd CSTP-Next/WEB_EXP
+.\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot' -DryRun
+```
+
+修改后需重启 CST Pilot，并按 `Ctrl+F5` 强刷。
