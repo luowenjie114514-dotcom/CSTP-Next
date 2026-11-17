@@ -1,26 +1,47 @@
-# CSTP-Next
+# test 分支 · 测试用途
 
-本仓库当前处于**归档/转向状态**。
-
-- `main` 分支：仅保留本自述文件与标记文件 `TURN_TO_THE_BRANCH_PATCH`。
-- `patch` 分支：本仓库后续工作的实际去处，包含 `WEB_OTP/` 等新内容。
-
-原 `main` 分支的全部历史内容仍完整保留在提交 `7da5585` 中，可随时检出查看或恢复：
-
-```bash
-git checkout 7da5585
-```
-
-或从 `patch` 分支获取最新内容：
-
-```bash
-git clone -b patch https://github.com/luowenjie114514-dotcom/CSTP-Next.git
-```
+> **本分支仅用于测试新功能，内容可能不稳定、随时变动或回退。**
+> 不要在生产环境或常用工作机上使用本分支的补丁。
 
 ---
 
-## 转向说明
+## 声明
 
-`main` 已清空，除本文件与 `TURN_TO_THE_BRANCH_PATCH` 外不再包含任何文件。
+| 项目 | 说明 |
+| --- | --- |
+| 用途 | 功能试验、回归验证、问题复现 |
+| 稳定性 | **不保证**，可能包含未完成或待废弃的实现 |
+| 内容 | 可能与 `patch` / `add` 均不同步 |
+| 数据安全 | 不保证向后兼容；补丁与回滚可能不配套 |
+| 使用者 | 愿意尝鲜并反馈问题的用户 |
 
-请将工作转向 `patch` 分支。
+---
+
+## 分支定位
+
+| 分支 | 定位 | 稳定性 |
+| --- | --- | --- |
+| [`patch`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/patch) | 纯前端优化，日常使用 | 稳定 |
+| [`add`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/add) | 必要的后端修改，全自动 | 可用，有代价 |
+| **`test`（本分支）** | **测试新功能** | **不稳定** |
+
+---
+
+## 使用建议
+
+- 想稳定使用 → 去 [`patch`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/patch)
+- 想全自动导入 → 去 [`add`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/add)
+- 想帮忙试错、反馈 bug → 留在本分支
+
+在本分支遇到问题时，请记录：
+
+1. 使用的提交号（`git rev-parse --short HEAD`）
+2. 具体现象与 F12 Console 报错
+3. 是否已在其它分支复现
+
+---
+
+## 当前状态
+
+本分支目前与 `main` 同步，尚未合入待测内容。
+后续测试补丁会先进入本分支验证，稳定后再移入 `patch` 或 `add`。
