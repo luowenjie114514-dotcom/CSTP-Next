@@ -1,8 +1,8 @@
 @echo off
-rem CSTPN: 回滚动态码登录入口
-rem 用法：CSTPN-rollback-otp.cmd            使用默认参数运行
-rem       CSTPN-rollback-otp.cmd -DryRun    只预演，不写文件
-rem       CSTPN-rollback-otp.cmd -Target D:\kits\cst-pilot
+rem CSTPN: Rollback dynamic-code login entry
+rem Usage: CSTPN-rollback-otp.cmd            run with defaults
+rem        CSTPN-rollback-otp.cmd -DryRun    dry run, no file writes
+rem        CSTPN-rollback-otp.cmd -Target D:\kits\cst-pilot
 setlocal
 chcp 65001 >nul
 where pwsh >nul 2>nul

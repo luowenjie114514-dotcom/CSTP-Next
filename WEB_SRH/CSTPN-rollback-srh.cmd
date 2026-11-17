@@ -1,8 +1,8 @@
 @echo off
-rem CSTPN: 回滚会话列表搜索
-rem 用法：CSTPN-rollback-srh.cmd            使用默认参数运行
-rem       CSTPN-rollback-srh.cmd -DryRun    只预演，不写文件
-rem       CSTPN-rollback-srh.cmd -Target D:\kits\cst-pilot
+rem CSTPN: Rollback session list search
+rem Usage: CSTPN-rollback-srh.cmd            run with defaults
+rem        CSTPN-rollback-srh.cmd -DryRun    dry run, no file writes
+rem        CSTPN-rollback-srh.cmd -Target D:\kits\cst-pilot
 setlocal
 chcp 65001 >nul
 where pwsh >nul 2>nul

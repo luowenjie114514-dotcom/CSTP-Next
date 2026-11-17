@@ -1,11 +1,10 @@
 @echo off
-rem CSTPN: 回滚会话 ID + 导入补丁
-rem 用法：CSTPN-rollback-idimp.cmd            使用默认参数运行
-rem       CSTPN-rollback-idimp.cmd -DryRun    只预演，不写文件
-rem       CSTPN-rollback-idimp.cmd -Target D:\kits\cst-pilot
+rem CSTPN: Rollback session ID + import patches
+rem Usage: CSTPN-rollback-idimp.cmd            run with defaults
+rem        CSTPN-rollback-idimp.cmd -DryRun    dry run, no file writes
+rem        CSTPN-rollback-idimp.cmd -Target D:\kits\cst-pilot
 setlocal
 chcp 65001 >nul
-echo. & echo   移除 WEB_ID 与 WEB_INP & echo.
 where pwsh >nul 2>nul
 if errorlevel 1 goto legacy
 pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0CSTPN-rollback-idimp.ps1" %*

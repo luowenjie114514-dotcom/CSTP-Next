@@ -1,11 +1,10 @@
 @echo off
-rem CSTPN: 安装会话列表搜索
-rem 用法：CSTPN-apply-srh.cmd            使用默认参数运行
-rem       CSTPN-apply-srh.cmd -DryRun    只预演，不写文件
-rem       CSTPN-apply-srh.cmd -Target D:\kits\cst-pilot
+rem CSTPN: Install session list search
+rem Usage: CSTPN-apply-srh.cmd            run with defaults
+rem        CSTPN-apply-srh.cmd -DryRun    dry run, no file writes
+rem        CSTPN-apply-srh.cmd -Target D:\kits\cst-pilot
 setlocal
 chcp 65001 >nul
-echo. & echo   侧栏顶部搜索框 & echo.
 where pwsh >nul 2>nul
 if errorlevel 1 goto legacy
 pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0CSTPN-apply-srh.ps1" %*
