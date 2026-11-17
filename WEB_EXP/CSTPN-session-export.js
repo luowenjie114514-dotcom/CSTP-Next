@@ -1,18 +1,21 @@
 /**
- * CSTP Next · 会话导出（浏览器下载版）。
+ * CSTP Next · 会话导出（浏览器下载版 + 导出选项页接管）。
  *
- * 为什么不用后端导出：
- * 后端 /api/sessions/<id>/exports 依赖 puppeteer-core 驱动本机 Edge/Chrome 渲染。
- * 在管理员权限或受限环境下浏览器常启动失败（export_browser_launch_failed），
- * 且导出目录固定、无法让用户选位置。
+ * 两处生效：
+ * 1. 会话右键菜单新增「导出 html（CSTP Next）」—— 快捷导出，直接下载。
+ * 2. /s/<id>/export 导出页 —— 接管原「导出选项」面板，保留原有选项
+ *    （格式 / 主题 / 包含思考过程 / 包含工具调用结果），
+ *    但「生成并保存」改为浏览器下载，由用户选择保存位置。
  *
- * 本实现改为纯前端：
- * 1. GET /api/sessions/<id> 取会话快照；
- * 2. 在页面内生成自包含 HTML（样式内嵌，无外部依赖）；
- * 3. 用 Blob + <a download> 触发下载，由浏览器的「另存为」对话框让用户选路径。
+ * 为什么接管后端导出：
+ * 后端 /api/sessions/<id>/exports 依赖 puppeteer-core 驱动本机 Edge/Chrome。
+ * 管理员权限或受限环境下常报 export_browser_launch_failed；
+ * 且导出目录固定为 artifacts/<日期>/sessions/，用户无法选择位置。
  *
- * 优点：不依赖后端渲染、不需要浏览器子进程、路径由用户决定。
- * 安全：只读 GET，不写任何本地文件，不执行会话内容中的脚本。
+ * 本实现：GET /api/sessions/<id> 取快照 → 页面内生成自包含 HTML →
+ * Blob + <a download> 触发浏览器「另存为」。
+ *
+ * 安全：只读 GET；内容全部 HTML 转义；不删除任何 React 管理的 DOM 节点。
  */
 (() => {
 	const MENU = ".session-menu";
@@ -21,7 +24,19 @@
 	const ROW = "[data-session-id]";
 	const TICK_MS = 400;
 
+	// 导出页选择器
+	const EXPORT_PAGE = "main.export-workspace";
+	const EXPORT_FIELDSET = ".export-controls fieldset";
+	const TAKEN = "data-cstpn-taken";
+
 	const state = { busy: false, toast: null };
+
+	const options = {
+		format: "html",
+		theme: "dark",
+		includeThinking: false,
+		includeTools: false,
+	};
 
 	// ---------------------------------------------------------------- 样式
 	function injectStyle() {
@@ -35,6 +50,7 @@
 .${MARK}-toast[data-tone="ok"]{background:rgba(22,74,52,.97)}
 .${MARK}-spin{width:13px;height:13px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:cstpn-export-spin .8s linear infinite;flex:none}
 @keyframes cstpn-export-spin{to{transform:rotate(360deg)}}
+.${MARK}-badge{font-weight:400;opacity:.62;font-size:.78em;margin-left:.4em}
 `;
 		document.head.appendChild(style);
 	}
@@ -114,8 +130,7 @@
 			.replace(/'/g, "&#39;");
 	}
 
-	/** 把一条消息的内容拆成可读的纯文本片段（不保留 HTML，避免注入）。 */
-	function messageText(message) {
+	function messageText(message, opts) {
 		if (!message) return "";
 		const content = message.content;
 		if (typeof content === "string") return content;
@@ -123,13 +138,16 @@
 		const parts = [];
 		for (const part of content) {
 			if (!part || typeof part !== "object") continue;
-			if (part.type === "text" && typeof part.text === "string") parts.push(part.text);
-			else if (part.type === "thinking" && typeof part.thinking === "string") parts.push(`〔思考〕\n${part.thinking}`);
-			else if (part.type === "toolCall") {
+			if (part.type === "text" && typeof part.text === "string") {
+				parts.push(part.text);
+			} else if (part.type === "thinking" && typeof part.thinking === "string") {
+				if (opts.includeThinking) parts.push(`〔思考〕\n${part.thinking}`);
+			} else if (part.type === "toolCall") {
+				if (!opts.includeTools) continue;
 				const name = part.name ?? "tool";
 				let args = "";
 				try {
-					args = JSON.stringify(part.arguments ?? {});
+					args = JSON.stringify(part.arguments ?? {}, null, 2);
 				} catch {
 					args = "";
 				}
@@ -139,6 +157,27 @@
 		return parts.join("\n\n");
 	}
 
+	const LIGHT = {
+		bodyBg: "#fafbfc",
+		bodyInk: "#1a2024",
+		userBg: "rgba(59,130,246,.07)",
+		userBorder: "rgba(59,130,246,.28)",
+		asstBg: "rgba(127,127,127,.07)",
+		cardBorder: "rgba(127,127,127,.22)",
+		codeBg: "rgba(127,127,127,.16)",
+		hr: "rgba(127,127,127,.34)",
+	};
+	const DARK = {
+		bodyBg: "#16191d",
+		bodyInk: "#e8ecef",
+		userBg: "rgba(96,165,250,.10)",
+		userBorder: "rgba(96,165,250,.34)",
+		asstBg: "rgba(148,163,184,.08)",
+		cardBorder: "rgba(148,163,184,.20)",
+		codeBg: "rgba(148,163,184,.18)",
+		hr: "rgba(148,163,184,.28)",
+	};
+
 	const ROLE_LABEL = {
 		user: "用户",
 		assistant: "助手",
@@ -146,7 +185,8 @@
 		branchSummary: "分支总结",
 	};
 
-	function buildHtml(sessions) {
+	function buildHtml(sessions, opts) {
+		const t = opts.theme === "light" ? LIGHT : DARK;
 		const now = new Date();
 		const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
@@ -159,7 +199,7 @@
 
 				const title =
 					snapshot?.title ||
-					messages.find((m) => m.role === "user")?.content?.toString?.().slice(0, 60) ||
+					messages.find((m) => typeof m.content === "string")?.content?.slice(0, 60) ||
 					snapshot?.id ||
 					"会话";
 
@@ -167,11 +207,9 @@
 					.map((message) => {
 						const role = message.role ?? "unknown";
 						const label = ROLE_LABEL[role] ?? role;
-						const body = messageText(message).trim();
+						const body = messageText(message, opts).trim();
 						if (!body) return "";
-						const time = message.timestamp
-							? new Date(message.timestamp).toLocaleString("zh-CN")
-							: "";
+						const time = message.timestamp ? new Date(message.timestamp).toLocaleString("zh-CN") : "";
 						return `<section class="msg msg-${escapeHtml(role)}">
 <header><span class="role">${escapeHtml(label)}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</header>
 <pre>${escapeHtml(body)}</pre>
@@ -195,24 +233,21 @@ ${rows || '<p class="empty">（无可显示的消息）</p>'}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>会话导出 · ${escapeHtml(stamp)}</title>
 <style>
-:root{color-scheme:light dark}
 *{box-sizing:border-box}
-body{margin:0;padding:32px 20px 64px;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;background:#fafbfc;color:#1a2024}
-@media (prefers-color-scheme:dark){body{background:#16191d;color:#e8ecef}}
+body{margin:0;padding:32px 20px 64px;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;background:${t.bodyBg};color:${t.bodyInk}}
 main{max-width:860px;margin:0 auto}
 h1{font-size:20px;margin:0 0 6px}
 .meta{margin:0 0 20px;font-size:12px;opacity:.62}
-code{font-size:12px;padding:1px 5px;border-radius:4px;background:rgba(127,127,127,.16)}
+code{font-size:12px;padding:1px 5px;border-radius:4px;background:${t.codeBg}}
 .session{margin-bottom:36px}
-.msg{margin:0 0 14px;padding:12px 14px;border-radius:10px;border:1px solid rgba(127,127,127,.22)}
-.msg-user{background:rgba(59,130,246,.07);border-color:rgba(59,130,246,.28)}
-.msg-assistant{background:rgba(127,127,127,.07)}
+.msg{margin:0 0 14px;padding:12px 14px;border-radius:10px;border:1px solid ${t.cardBorder};background:${t.asstBg}}
+.msg-user{background:${t.userBg};border-color:${t.userBorder}}
 .msg header{display:flex;gap:10px;align-items:baseline;margin-bottom:6px}
 .role{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.72}
 time{font-size:11px;opacity:.5}
 pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:14px}
 .empty{opacity:.6;font-size:13px}
-hr{border:none;border-top:1px dashed rgba(127,127,127,.34);margin:34px 0}
+hr{border:none;border-top:1px dashed ${t.hr};margin:34px 0}
 footer{margin-top:48px;font-size:11px;opacity:.45;text-align:center}
 </style>
 </head>
@@ -234,11 +269,11 @@ ${blocks}
 		const name = Array.from(cleaned).slice(0, 60).join("") || "会话";
 		const d = new Date();
 		const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
-		return `${name}-${stamp}.html`;
+		return `${name}-${stamp}`;
 	}
 
-	function download(html, filename) {
-		const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+	function download(content, filename, mime) {
+		const blob = new Blob([content], { type: mime || "text/html;charset=utf-8" });
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement("a");
 		anchor.href = url;
@@ -247,7 +282,6 @@ ${blocks}
 		anchor.style.display = "none";
 		document.body.appendChild(anchor);
 		anchor.click();
-		// 下载触发后即可移除；这里只删自己创建的节点，不碰 React 的 DOM。
 		window.setTimeout(() => {
 			try {
 				anchor.remove();
@@ -259,7 +293,7 @@ ${blocks}
 	}
 
 	// ---------------------------------------------------------------- 主流程
-	async function runExport(sessionIds) {
+	async function runExport(sessionIds, opts) {
 		if (state.busy) return;
 		if (!sessionIds || !sessionIds.length) {
 			toast("没有可导出的会话", "error");
@@ -268,6 +302,7 @@ ${blocks}
 		}
 		state.busy = true;
 		const total = sessionIds.length;
+		const useOpts = { ...options, ...(opts || {}) };
 
 		try {
 			const snapshots = [];
@@ -276,7 +311,6 @@ ${blocks}
 				snapshots.push(await fetchSnapshot(sessionIds[i]));
 			}
 
-			const html = buildHtml(snapshots);
 			const first = snapshots[0];
 			const title =
 				first?.title ||
@@ -284,11 +318,44 @@ ${blocks}
 					? first.entries.find((e) => e?.message?.role === "user")?.message?.content
 					: "") ||
 				"会话";
+			const base = safeFileName(String(title));
+
+			let content;
+			let extension;
+			let mime;
+			if (useOpts.format === "json") {
+				const payload = snapshots.map((snapshot) => ({
+					id: snapshot?.id,
+					title: snapshot?.title,
+					exportedAt: new Date().toISOString(),
+					options: {
+						includeThinking: useOpts.includeThinking,
+						includeTools: useOpts.includeTools,
+					},
+					messages: (Array.isArray(snapshot?.entries) ? snapshot.entries : [])
+						.map((entry) => entry?.message ?? entry)
+						.filter((m) => m && typeof m === "object")
+						.map((m) => {
+							const text = messageText(m, useOpts).trim();
+							return { role: m.role, timestamp: m.timestamp ?? null, content: text };
+						})
+						.filter((m) => m.content),
+				}));
+				content = JSON.stringify(total > 1 ? payload : payload[0], null, 2);
+				extension = "json";
+				mime = "application/json;charset=utf-8";
+			} else {
+				content = buildHtml(snapshots, useOpts);
+				extension = "html";
+				mime = "text/html;charset=utf-8";
+			}
+
 			const filename =
-				total > 1 ? `会话导出-${total}个-${safeFileName("").replace(/^会话-/, "")}` : safeFileName(String(title));
+				total > 1
+					? `会话导出-${total}个-${base.replace(/^[^-]*-/, "")}.${extension}`
+					: `${base}.${extension}`;
 
-			download(html, filename);
-
+			download(content, filename, mime);
 			toast(`已导出 ${total} 个会话，请在浏览器保存对话框中确认位置`, "ok");
 			window.setTimeout(clearToast, 5000);
 		} catch (error) {
@@ -299,7 +366,7 @@ ${blocks}
 		}
 	}
 
-	// ---------------------------------------------------------------- 菜单
+	// ---------------------------------------------------------------- 右键菜单
 	function icon() {
 		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 		svg.setAttribute("width", "18");
@@ -326,13 +393,12 @@ ${blocks}
 		button.className = "sidebar-account-item";
 		button.setAttribute(MARK, "");
 		button.appendChild(icon());
-		button.appendChild(document.createTextNode("导出（CSTP Next）"));
+		button.appendChild(document.createTextNode("导出 html（CSTP Next）"));
 		button.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
 			const ids = targetSessionIds();
-			// 不手动关闭菜单：节点归 React 所有，remove() 会导致 removeChild 崩溃。
-			void runExport(ids);
+			void runExport(ids, options);
 		});
 		return button;
 	}
@@ -353,15 +419,195 @@ ${blocks}
 		}
 	}
 
+	// ---------------------------------------------------------------- 导出页接管
+	function fieldRow(labelText, node) {
+		const wrap = document.createElement("div");
+		wrap.className = "cstpn-field";
+		const label = document.createElement("span");
+		label.className = "cstpn-field-label";
+		label.textContent = labelText;
+		wrap.append(label, node);
+		return wrap;
+	}
+
+	function segmented(name, items, value, onChange) {
+		const group = document.createElement("div");
+		group.className = "cstpn-segmented";
+		group.setAttribute("role", "radiogroup");
+		group.setAttribute("aria-label", name);
+		const buttons = [];
+		for (const item of items) {
+			const b = document.createElement("button");
+			b.type = "button";
+			b.className = "cstpn-seg";
+			b.textContent = item.label;
+			b.dataset.value = item.id;
+			b.setAttribute("role", "radio");
+			b.addEventListener("click", () => {
+				for (const x of buttons) {
+					x.dataset.active = x === b ? "true" : "false";
+					x.setAttribute("aria-checked", x === b ? "true" : "false");
+				}
+				onChange(item.id);
+			});
+			buttons.push(b);
+			group.appendChild(b);
+		}
+		for (const b of buttons) {
+			b.dataset.active = b.dataset.value === value ? "true" : "false";
+			b.setAttribute("aria-checked", b.dataset.active === "true" ? "true" : "false");
+		}
+		return group;
+	}
+
+	function checkbox(labelText, checked, onChange) {
+		const label = document.createElement("label");
+		label.className = "cstpn-check";
+		const input = document.createElement("input");
+		input.type = "checkbox";
+		input.checked = checked;
+		input.addEventListener("change", () => onChange(input.checked));
+		const span = document.createElement("span");
+		span.textContent = labelText;
+		label.append(input, span);
+		return label;
+	}
+
+	function injectPageStyle() {
+		if (document.getElementById("cstpn-page-style")) return;
+		const style = document.createElement("style");
+		style.id = "cstpn-page-style";
+		style.textContent = `
+.cstpn-panel{display:grid;gap:var(--space-group,16px)}
+.cstpn-field{display:grid;gap:6px;font-size:var(--font-ui,13px);line-height:var(--line-ui,1.5)}
+.cstpn-field-label{font-weight:600;opacity:.78}
+.cstpn-segmented{display:inline-flex;padding:3px;border-radius:10px;background:rgba(127,127,127,.13);gap:2px}
+.cstpn-seg{border:none;background:transparent;color:inherit;font:inherit;font-size:var(--font-ui,13px);padding:6px 14px;border-radius:8px;cursor:pointer;opacity:.72}
+.cstpn-seg[data-active="true"]{background:rgba(127,127,127,.28);opacity:1;font-weight:600}
+.cstpn-seg:hover{opacity:1}
+.cstpn-check{display:flex;align-items:center;gap:8px;font-size:var(--font-ui,13px);cursor:pointer}
+.cstpn-check input{margin:0;cursor:pointer}
+.cstpn-generate{justify-self:start;align-items:center;gap:var(--space-inline,8px);min-height:var(--control-field,38px);padding:10px var(--space-section,20px);border:none;border-radius:var(--radius-control,10px);color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:var(--font-ui,13px);font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
+.cstpn-generate:disabled{opacity:.6;cursor:default}
+.cstpn-note{font-size:var(--font-ui,13px);color:var(--chat-muted,#6b7280);margin:0}
+.${MARK}-badge{font-weight:400;opacity:.6;font-size:.8em;margin-left:.4em}
+`;
+		document.head.appendChild(style);
+	}
+
+	/** 接管导出页的「导出选项」面板。 */
+	function ensureExportPage() {
+		const main = document.querySelector(EXPORT_PAGE);
+		if (!main) return;
+
+		// 1) 标题加 (CSTP Next) 标识
+		const h1 = main.querySelector(".export-toolbar h1");
+		if (h1 && !h1.querySelector(`.${MARK}-badge`)) {
+			injectStyle();
+			const badge = document.createElement("span");
+			badge.className = `${MARK}-badge`;
+			badge.textContent = "（CSTP Next）";
+			h1.appendChild(badge);
+		}
+
+		// 2) 接管导出选项面板
+		const fieldset = main.querySelector(EXPORT_FIELDSET);
+		if (!fieldset || fieldset.hasAttribute(TAKEN)) return;
+
+		injectPageStyle();
+		fieldset.setAttribute(TAKEN, "");
+		// 保留 legend 文案，清空其余内容（原按钮与复选框都替换掉）
+		const legend = fieldset.querySelector("legend");
+		const legendText = legend?.textContent ?? "导出选项";
+		while (fieldset.firstChild) fieldset.removeChild(fieldset.firstChild);
+
+		const legendEl = document.createElement("legend");
+		legendEl.textContent = legendText;
+		fieldset.appendChild(legendEl);
+
+		const panel = document.createElement("div");
+		panel.className = "cstpn-panel";
+
+		const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
+
+		panel.appendChild(
+			fieldRow(
+				"格式",
+				segmented(
+					"格式",
+					[
+						{ id: "html", label: "离线 HTML" },
+						{ id: "json", label: "JSON 数据" },
+					],
+					options.format,
+					(value) => {
+						options.format = value;
+					},
+				),
+			),
+		);
+
+		panel.appendChild(
+			fieldRow(
+				"主题",
+				segmented(
+					"主题",
+					[
+						{ id: "light", label: "日间" },
+						{ id: "dark", label: "夜间" },
+					],
+					options.theme,
+					(value) => {
+						options.theme = value;
+					},
+				),
+			),
+		);
+
+		panel.appendChild(
+			checkbox("包含思考过程", options.includeThinking, (v) => {
+				options.includeThinking = v;
+			}),
+		);
+		panel.appendChild(
+			checkbox("包含工具调用结果", options.includeTools, (v) => {
+				options.includeTools = v;
+			}),
+		);
+
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "cstpn-generate";
+		button.textContent = "导出并下载";
+		button.addEventListener("click", () => {
+			if (!sessionId) {
+				toast("未能识别会话 ID", "error");
+				window.setTimeout(clearToast, 3000);
+				return;
+			}
+			void runExport([sessionId], { ...options });
+		});
+		panel.appendChild(button);
+
+		const note = document.createElement("p");
+		note.className = "cstpn-note";
+		note.textContent = "由浏览器下载保存，可在保存对话框中选择位置。";
+		panel.appendChild(note);
+
+		fieldset.appendChild(panel);
+	}
+
+	// ---------------------------------------------------------------- 调度
 	function tick() {
 		try {
 			ensureMenu();
+			ensureExportPage();
 		} catch {
 			/* 静默跳过 */
 		}
 	}
 
-	window.__cstpnExport = { runExport, targetSessionIds, buildHtml };
+	window.__cstpnExport = { runExport, targetSessionIds, buildHtml, options };
 
 	document.addEventListener("contextmenu", trackContextMenu, true);
 
