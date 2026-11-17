@@ -150,10 +150,16 @@ function Show-Status([string]$Target) {
 # ---------------------------------------------------------------- 动作
 function Invoke-PatchScript([string]$ScriptPath, [string]$Target, [string]$SourceDir, [switch]$WhatIf) {
     if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "找不到脚本：$ScriptPath" }
-    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-Target', $Target, '-Source', $SourceDir)
-    if ($WhatIf) { $args += '-DryRun' }
-    & powershell @args
-    if ($LASTEXITCODE -ne 0) { throw "脚本执行失败（退出码 $LASTEXITCODE）" }
+    # 安装脚本接受 -Source；回滚脚本只有 -Target/-DryRun。
+    # 传错参数会让 PowerShell 直接拒绝执行（且错误可能被吞掉），因此按需拼参。
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-Target', $Target)
+    if ((Split-Path $ScriptPath -Leaf) -notlike 'CSTPN-rollback-*') { $argv += @('-Source', $SourceDir) }
+    if ($WhatIf) { $argv += '-DryRun' }
+
+    $output = & powershell @argv 2>&1
+    $code = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host "    $_" }
+    if ($code -ne 0) { throw "脚本执行失败（$([System.IO.Path]::GetFileName($ScriptPath))，退出码 $code）" }
 }
 
 function Copy-TestScript([string]$Target, [string]$SourceDir, [string]$Name, [switch]$Remove) {
