@@ -1,0 +1,68 @@
+[
+  {
+    "file": "1a2cff50-358d-412c-8201-f62e7c519ebf.json",
+    "id": "1a2cff50-358d-412c-8201-f62e7c519ebf",
+    "capturedAt": "2026-11-17T13:05:52.654Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "failed",
+    "errorCode": "export_browser_launch_failed",
+    "errorMessage": "导出浏览器无法启动，请检查浏览器版本、运行权限或 CST_EXPORT_BROWSER 路径。",
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  },
+  {
+    "file": "2dffd83c-78cd-4aad-b36d-685c8c67dc59.json",
+    "id": "2dffd83c-78cd-4aad-b36d-685c8c67dc59",
+    "capturedAt": "2026-11-17T07:13:42.714Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "failed",
+    "errorCode": "export_browser_launch_failed",
+    "errorMessage": "导出浏览器无法启动，请检查浏览器版本、运行权限或 CST_EXPORT_BROWSER 路径。",
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  },
+  {
+    "file": "448209de-f9c0-4151-bc50-f3fc74f6354a.json",
+    "id": "448209de-f9c0-4151-bc50-f3fc74f6354a",
+    "capturedAt": "2026-11-17T07:13:07.317Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "failed",
+    "errorCode": "export_browser_launch_failed",
+    "errorMessage": "导出浏览器无法启动，请检查浏览器版本、运行权限或 CST_EXPORT_BROWSER 路径。",
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  },
+  {
+    "file": "6c8c28ae-752f-42c2-a021-d005eb88ed29.json",
+    "id": "6c8c28ae-752f-42c2-a021-d005eb88ed29",
+    "capturedAt": "2026-11-17T07:03:11.530Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "failed",
+    "errorCode": "export_browser_launch_failed",
+    "errorMessage": "导出浏览器无法启动，请检查浏览器版本、运行权限或 CST_EXPORT_BROWSER 路径。",
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  },
+  {
+    "file": "95b53232-f449-4eb2-b480-670529b0cb3f.json",
+    "id": "95b53232-f449-4eb2-b480-670529b0cb3f",
+    "capturedAt": "2026-11-17T07:06:40.252Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "failed",
+    "errorCode": "export_browser_launch_failed",
+    "errorMessage": "导出浏览器无法启动，请检查浏览器版本、运行权限或 CST_EXPORT_BROWSER 路径。",
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  },
+  {
+    "file": "c03a7e11-64ab-40a5-b2b4-0299c5df3313.json",
+    "id": "c03a7e11-64ab-40a5-b2b4-0299c5df3313",
+    "capturedAt": "2026-11-17T07:16:08.904Z",
+    "format": "png",
+    "theme": "dark",
+    "status": "rendering",
+    "errorCode": null,
+    "errorMessage": null,
+    "directory": "C:\\Users\\ANWEN\\Desktop\\cst-pilot\\artifacts\\2026-11-17\\sessions"
+  }
+]
