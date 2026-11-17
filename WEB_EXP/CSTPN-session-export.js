@@ -1,22 +1,26 @@
 /**
- * CSTP Next · 会话导出（浏览器下载版）。
+ * CSTP Next · 会话导出（浏览器下载版 + 导出选项页接管）。
  *
- * 设计要点（针对真实故障做的取舍）：
+ * 两处生效：
+ * 1. 会话右键菜单「导出（CSTP Next）」
+ *    - 单选：跳转 /s/<id>/export
+ *    - 多选：多文件导出（每个会话一个文件）
+ * 2. /s/<id>/export 导出页
+ *    - 标题加「（CSTP Next）」标识
+ *    - 接管「导出选项」面板：保留原生三项（PNG / 离线 HTML / JSON 追加）、
+ *      主题、两个勾选项，**沿用原生下拉选择器的交互形态**
+ *    - 按钮改为「导出并下载」，走浏览器下载
  *
- * 1. 为什么不用后端 /exports 接口
- *    它用 puppeteer-core 驱动本机 Edge/Chrome 渲染，实测报
- *    export_browser_launch_failed；且保存目录固定为
- *    artifacts/<日期>/sessions/，使用者无法选择位置。
+ * 与原生对齐的要点（依据 export-PIXoPwsY.js 实测）：
+ *   - 原生格式项：{ id:"png", label:"PNG 图片" }, { id:"html", label:"离线 HTML" }
+ *   - 原生主题项：{ id:"light", label:"日间" }, { id:"dark", label:"夜间" }
+ *   - 原生控件 T 是下拉选择器：export-select / export-select-trigger /
+ *     export-select-popover，点击展开候选列表 —— 不能用平铺按钮替代
+ *   - 原生默认 format = "png"，theme 跟随页面
  *
- * 2. 为什么用「捕获阶段事件拦截」而不是「替换 DOM」
- *    导出页由 React 渲染，重渲染会把注入的节点冲掉（实测有 1.5s 空窗），
- *    期间点到的是原来那个失败的「生成并保存」。
- *    监听器挂在 document 上，capture 阶段先手，React 无论如何重渲染都拦得住。
- *    DOM 改写只作为「视觉呈现」，用 MutationObserver 立即补回，不再是功能依赖。
- *
- * 3. 右键菜单
- *    单选 → 跳转 /s/<id>/export 导出选项页
- *    多选 → 逐个会话各下载一个文件（多文件导出）
+ * 实现约束（踩过的坑）：
+ *   - 不删除 React 节点；功能保障用 document 上的 capture 阶段 click 拦截
+ *   - DOM 改写只做视觉，MutationObserver 立即补回
  */
 (() => {
 	const MENU = ".session-menu";
@@ -31,8 +35,9 @@
 
 	const state = { busy: false, toast: null };
 
+	/** 与原生默认值保持一致：格式默认 PNG。 */
 	const options = {
-		format: "html",
+		format: "png",
 		theme: "dark",
 		includeThinking: false,
 		includeTools: false,
@@ -60,18 +65,24 @@
 		const style = document.createElement("style");
 		style.id = "cstpn-page-style";
 		style.textContent = `
-.cstpn-panel{display:grid;gap:14px}
-.cstpn-field{display:grid;gap:6px;font-size:13px;line-height:1.5}
+/* 下拉选择器：复刻原生 export-select 的形态 */
+.cstpn-field{display:grid;gap:6px;font-size:var(--font-ui,13px);line-height:var(--line-ui,1.5)}
 .cstpn-field-label{font-weight:600;opacity:.78}
-.cstpn-segmented{display:inline-flex;padding:3px;border-radius:10px;background:rgba(127,127,127,.13);gap:2px}
-.cstpn-seg{border:none;background:transparent;color:inherit;font:inherit;font-size:13px;padding:6px 14px;border-radius:8px;cursor:pointer;opacity:.72}
-.cstpn-seg[data-active="true"]{background:rgba(127,127,127,.28);opacity:1;font-weight:600}
-.cstpn-seg:hover{opacity:1}
-.cstpn-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.cstpn-select{position:relative;display:block}
+.cstpn-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;box-sizing:border-box;width:100%;min-height:var(--control-field,38px);padding:8px 11px;border-radius:var(--radius-control,10px);border:1px solid var(--chat-border,rgba(127,127,127,.34));background:transparent;color:inherit;font:inherit;font-size:var(--font-ui,13px);cursor:pointer;text-align:left}
+.cstpn-select-trigger:hover{border-color:var(--app-send,rgba(127,127,127,.62))}
+.cstpn-select-trigger .chev{flex:none;opacity:.6;transition:transform .16s ease}
+.cstpn-select[data-open="true"] .chev{transform:rotate(180deg)}
+.cstpn-select-popover{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;padding:4px;border-radius:10px;border:1px solid var(--chat-border,rgba(127,127,127,.34));background:var(--chat-bg,#1c1f24);box-shadow:0 12px 30px rgba(0,0,0,.34);max-height:240px;overflow:auto}
+.cstpn-select-popover[hidden]{display:none}
+.cstpn-select-item{display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:none;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:var(--font-ui,13px);text-align:left;cursor:pointer}
+.cstpn-select-item:hover{background:rgba(127,127,127,.16)}
+.cstpn-select-item[data-selected="true"]{background:rgba(127,127,127,.24);font-weight:600}
+.cstpn-check{display:flex;align-items:center;gap:8px;font-size:var(--font-ui,13px);cursor:pointer}
 .cstpn-check input{margin:0;cursor:pointer}
-.cstpn-generate{justify-self:start;align-items:center;gap:8px;min-height:38px;padding:10px 20px;border:none;border-radius:10px;color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:13px;font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
+.cstpn-generate{justify-self:start;align-items:center;gap:var(--space-inline,8px);min-height:var(--control-field,38px);padding:10px var(--space-section,20px);border:none;border-radius:var(--radius-control,10px);color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:var(--font-ui,13px);font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
 .cstpn-generate:disabled{opacity:.6;cursor:default}
-.cstpn-note{font-size:13px;color:var(--chat-muted,#6b7280);margin:0}
+.cstpn-note{font-size:var(--font-ui,13px);color:var(--chat-muted,#6b7280);margin:0}
 `;
 		document.head.appendChild(style);
 	}
@@ -303,7 +314,7 @@ ${blocks}
 	}
 
 	function saveFile(content, filename, mime) {
-		const blob = new Blob([content], { type: mime || "text/html;charset=utf-8" });
+		const blob = new Blob([content], { type: mime || "application/octet-stream" });
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement("a");
 		anchor.href = url;
@@ -333,9 +344,138 @@ ${blocks}
 	}
 
 	/**
-	 * 导出会话。
-	 * 单会话 → 一个文件；多会话 → 每个会话各自一个文件（多文件导出）。
+	 * PNG 导出：用 canvas 把会话渲染成长图。
+	 * 这是纯前端实现，不依赖后端 puppeteer。
 	 */
+	async function buildPng(snapshot, opts) {
+		const t = THEMES[opts.theme === "light" ? "light" : "dark"];
+		const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+		const messages = entries
+			.map((e) => e?.message ?? e)
+			.filter((m) => m && typeof m === "object")
+			.map((m) => ({ role: m.role ?? "unknown", text: messageText(m, opts).trim() }))
+			.filter((m) => m.text);
+		if (!messages.length) throw new Error("没有可渲染的消息");
+
+		const WIDTH = 1000;
+		const PAD = 40;
+		const innerW = WIDTH - PAD * 2;
+		const canvas = document.createElement("canvas");
+		const ctx = canvas.getContext("2d");
+		const font = '16px system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
+		const titleFont = 'bold 26px system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
+		const metaFont = '13px system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
+
+		// 逐行折行，先算高度
+		function wrap(text, maxW, f) {
+			ctx.font = f;
+			const out = [];
+			for (const raw of String(text).split("\n")) {
+				if (!raw) {
+					out.push("");
+					continue;
+				}
+				let line = "";
+				for (const ch of raw) {
+					const test = line + ch;
+					if (ctx.measureText(test).width > maxW && line) {
+						out.push(line);
+						line = ch;
+					} else {
+						line = test;
+					}
+				}
+				if (line) out.push(line);
+			}
+			return out;
+		}
+
+		const LINE = 24;
+		const blocks = [];
+		let totalH = PAD + 44; // 标题
+		for (const m of messages) {
+			const lines = wrap(m.text, innerW - 28, font);
+			const h = 34 + lines.length * LINE + 18;
+			blocks.push({ role: m.role, lines, h });
+			totalH += h + 12;
+		}
+		totalH += PAD + 20;
+
+		canvas.width = WIDTH;
+		canvas.height = Math.min(Math.max(totalH, 240), 20000);
+
+		ctx.fillStyle = t.bodyBg;
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+		let y = PAD;
+		ctx.fillStyle = t.bodyInk;
+		ctx.font = titleFont;
+		ctx.fillText(titleOf(snapshot).slice(0, 60), PAD, y + 22);
+		y += 22;
+		ctx.font = metaFont;
+		ctx.globalAlpha = 0.6;
+		ctx.fillText(`会话 ID：${snapshot?.id ?? ""}`, PAD, y + 20);
+		ctx.globalAlpha = 1;
+		y += 44;
+
+		for (const b of blocks) {
+			const isUser = b.role === "user";
+			ctx.fillStyle = isUser ? t.userBg : t.asstBg;
+			const rx = PAD;
+			const rw = WIDTH - PAD * 2;
+			// 圆角矩形
+			const r = 10;
+			ctx.beginPath();
+			ctx.moveTo(rx + r, y);
+			ctx.arcTo(rx + rw, y, rx + rw, y + b.h, r);
+			ctx.arcTo(rx + rw, y + b.h, rx, y + b.h, r);
+			ctx.arcTo(rx, y + b.h, rx, y, r);
+			ctx.arcTo(rx, y, rx + rw, y, r);
+			ctx.closePath();
+			ctx.fill();
+
+			ctx.fillStyle = t.bodyInk;
+			ctx.globalAlpha = 0.62;
+			ctx.font = metaFont;
+			ctx.fillText(ROLE_LABEL[b.role] ?? b.role, rx + 14, y + 22);
+			ctx.globalAlpha = 1;
+			ctx.font = font;
+			let ly = y + 34;
+			for (const line of b.lines) {
+				ly += LINE;
+				ctx.fillText(line, rx + 14, ly);
+			}
+			y += b.h + 12;
+		}
+
+		return new Promise((resolve, reject) => {
+			canvas.toBlob((blob) => {
+				if (blob) resolve(blob);
+				else reject(new Error("PNG 生成失败"));
+			}, "image/png");
+		});
+	}
+
+	function saveBlob(blob, filename) {
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = filename;
+		anchor.rel = "noopener";
+		anchor.style.display = "none";
+		document.body.appendChild(anchor);
+		anchor.click();
+		window.setTimeout(() => {
+			try {
+				anchor.remove();
+			} catch {
+				/* 忽略 */
+			}
+			URL.revokeObjectURL(url);
+		}, 2000);
+	}
+
+	// ---------------------------------------------------------------- 主流程
 	async function runExport(sessionIds, opts) {
 		if (state.busy) return;
 		if (!sessionIds || !sessionIds.length) {
@@ -345,17 +485,22 @@ ${blocks}
 		state.busy = true;
 		const useOpts = { ...options, ...(opts || {}) };
 		const total = sessionIds.length;
-		const ext = useOpts.format === "json" ? "json" : "html";
-		const mime = useOpts.format === "json" ? "application/json;charset=utf-8" : "text/html;charset=utf-8";
 
 		try {
 			for (let i = 0; i < total; i += 1) {
 				toast(total > 1 ? `正在导出 ${i + 1}/${total}…` : "正在导出…", "info");
 				const snapshot = await fetchSnapshot(sessionIds[i]);
-				const content =
-					useOpts.format === "json" ? buildJson([snapshot], useOpts) : buildHtml([snapshot], useOpts);
-				saveFile(content, `${fileBase(titleOf(snapshot))}.${ext}`, mime);
-				// 多文件时留出间隔，避免浏览器把连续下载判定为弹窗而拦掉。
+				const base = fileBase(titleOf(snapshot));
+
+				if (useOpts.format === "png") {
+					const blob = await buildPng(snapshot, useOpts);
+					saveBlob(blob, `${base}.png`);
+				} else if (useOpts.format === "json") {
+					saveFile(buildJson([snapshot], useOpts), `${base}.json`, "application/json;charset=utf-8");
+				} else {
+					saveFile(buildHtml([snapshot], useOpts), `${base}.html`, "text/html;charset=utf-8");
+				}
+
 				if (i < total - 1) await sleep(700);
 			}
 			toast(`已导出 ${total} 个文件，请在浏览器保存对话框中确认位置`, "ok", 5000);
@@ -395,10 +540,8 @@ ${blocks}
 			event.stopPropagation();
 			const ids = targetSessionIds();
 			if (ids.length === 1) {
-				// 单选：进入导出选项页
 				location.assign(`/s/${encodeURIComponent(ids[0])}/export`);
 			} else if (ids.length > 1) {
-				// 多选：多文件导出
 				void runExport(ids, options);
 			} else {
 				toast("没有识别到会话", "error", 2600);
@@ -421,38 +564,88 @@ ${blocks}
 		}
 	}
 
-	// ---------------------------------------------------------------- 导出页视觉接管
-	function fieldRow(labelText, node) {
+	// ---------------------------------------------------------------- 导出页接管
+	/** 下拉选择器：与原生 export-select 交互一致（点击展开候选）。 */
+	function selectField(labelText, items, value, onChange) {
 		const wrap = document.createElement("div");
 		wrap.className = "cstpn-field";
+
 		const label = document.createElement("span");
 		label.className = "cstpn-field-label";
 		label.textContent = labelText;
-		wrap.append(label, node);
-		return wrap;
-	}
 
-	function segmented(items, value, onChange) {
-		const group = document.createElement("div");
-		group.className = "cstpn-segmented";
-		group.setAttribute("role", "radiogroup");
-		const buttons = [];
+		const box = document.createElement("div");
+		box.className = "cstpn-select";
+		box.dataset.open = "false";
+
+		const trigger = document.createElement("button");
+		trigger.type = "button";
+		trigger.className = "cstpn-select-trigger";
+
+		const text = document.createElement("span");
+		text.textContent = items.find((i) => i.id === value)?.label ?? "";
+
+		const chev = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		chev.setAttribute("class", "chev");
+		chev.setAttribute("width", "16");
+		chev.setAttribute("height", "16");
+		chev.setAttribute("viewBox", "0 0 24 24");
+		chev.setAttribute("fill", "none");
+		chev.setAttribute("stroke", "currentColor");
+		chev.setAttribute("stroke-width", "2");
+		chev.setAttribute("stroke-linecap", "round");
+		chev.setAttribute("stroke-linejoin", "round");
+		chev.setAttribute("aria-hidden", "true");
+		const cp = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		cp.setAttribute("d", "m6 9 6 6 6-6");
+		chev.appendChild(cp);
+
+		trigger.append(text, chev);
+
+		const popover = document.createElement("div");
+		popover.className = "cstpn-select-popover";
+		popover.hidden = true;
+
+		let current = value;
 		for (const item of items) {
-			const b = document.createElement("button");
-			b.type = "button";
-			b.className = "cstpn-seg";
-			b.textContent = item.label;
-			b.dataset.value = item.id;
-			b.setAttribute("role", "radio");
-			b.addEventListener("click", () => {
-				for (const x of buttons) x.dataset.active = x === b ? "true" : "false";
+			const opt = document.createElement("button");
+			opt.type = "button";
+			opt.className = "cstpn-select-item";
+			opt.textContent = item.label;
+			opt.dataset.selected = item.id === current ? "true" : "false";
+			opt.addEventListener("click", () => {
+				current = item.id;
+				text.textContent = item.label;
+				for (const o of popover.querySelectorAll(".cstpn-select-item")) {
+					o.dataset.selected = o === opt ? "true" : "false";
+				}
+				box.dataset.open = "false";
+				popover.hidden = true;
 				onChange(item.id);
 			});
-			buttons.push(b);
-			group.appendChild(b);
+			popover.appendChild(opt);
 		}
-		for (const b of buttons) b.dataset.active = b.dataset.value === value ? "true" : "false";
-		return group;
+
+		trigger.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const open = box.dataset.open !== "true";
+			box.dataset.open = open ? "true" : "false";
+			popover.hidden = !open;
+		});
+
+		// 点击外部收起
+		const onDocDown = (event) => {
+			if (!box.contains(event.target)) {
+				box.dataset.open = "false";
+				popover.hidden = true;
+			}
+		};
+		document.addEventListener("mousedown", onDocDown, true);
+
+		box.append(trigger, popover);
+		wrap.append(label, box);
+		return wrap;
 	}
 
 	function checkbox(labelText, checked, onChange) {
@@ -495,20 +688,34 @@ ${blocks}
 
 		const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
 		const panel = document.createElement("div");
-		panel.className = "cstpn-panel";
+		panel.style.cssText = "display:grid;gap:var(--space-group,16px)";
+
+		// 格式：保留原生 PNG，追加 JSON
+		panel.appendChild(
+			selectField(
+				"格式",
+				[
+					{ id: "png", label: "PNG 图片" },
+					{ id: "html", label: "离线 HTML" },
+					{ id: "json", label: "JSON 数据" },
+				],
+				options.format,
+				(v) => { options.format = v; },
+			),
+		);
 
 		panel.appendChild(
-			fieldRow("格式", segmented([
-				{ id: "html", label: "离线 HTML" },
-				{ id: "json", label: "JSON 数据" },
-			], options.format, (v) => { options.format = v; })),
+			selectField(
+				"主题",
+				[
+					{ id: "light", label: "日间" },
+					{ id: "dark", label: "夜间" },
+				],
+				options.theme,
+				(v) => { options.theme = v; },
+			),
 		);
-		panel.appendChild(
-			fieldRow("主题", segmented([
-				{ id: "light", label: "日间" },
-				{ id: "dark", label: "夜间" },
-			], options.theme, (v) => { options.theme = v; })),
-		);
+
 		panel.appendChild(checkbox("包含思考过程", options.includeThinking, (v) => { options.includeThinking = v; }));
 		panel.appendChild(checkbox("包含工具调用结果", options.includeTools, (v) => { options.includeTools = v; }));
 
@@ -530,26 +737,18 @@ ${blocks}
 		fieldset.appendChild(panel);
 	}
 
-	// ---------------------------------------------------------------- 关键：捕获阶段拦截
-	/**
-	 * 在原「生成并保存」按钮的点击到达 React 之前拦截。
-	 * 监听器挂在 document 上，React 重渲染换掉按钮也不影响拦截。
-	 */
+	// ---------------------------------------------------------------- 捕获阶段拦截
 	function interceptExportClick(event) {
 		try {
 			const target = event.target;
 			if (!target?.closest) return;
 			const main = target.closest(EXPORT_PAGE);
 			if (!main) return;
-
-			// 命中原始「生成并保存」按钮（或其后代）
 			const origin = target.closest(".export-generate");
 			if (!origin) return;
-
 			event.preventDefault();
 			event.stopPropagation();
 			event.stopImmediatePropagation();
-
 			const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
 			if (!sessionId) {
 				toast("未能识别会话 ID", "error", 3000);
@@ -573,18 +772,16 @@ ${blocks}
 		}
 	}
 
-	// 监听器立即挂载——这是功能保障，不依赖任何 DOM 时机
 	document.addEventListener("click", interceptExportClick, true);
 	document.addEventListener("contextmenu", trackContextMenu, true);
 
-	// DOM 变化立即补回视觉接管（不是功能依赖，只是让界面不闪回旧样式）
 	function startObserver() {
 		if (observer || typeof MutationObserver === "undefined") return;
 		observer = new MutationObserver(() => tick());
 		observer.observe(document.documentElement, { childList: true, subtree: true });
 	}
 
-	window.__cstpnExport = { runExport, targetSessionIds, buildHtml, buildJson, options };
+	window.__cstpnExport = { runExport, targetSessionIds, buildHtml, buildJson, buildPng, options };
 
 	if (document.readyState === "loading") {
 		document.addEventListener("DOMContentLoaded", () => {
