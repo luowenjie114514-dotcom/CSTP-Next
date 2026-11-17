@@ -1,16 +1,17 @@
 ﻿<#
     CSTPN 补丁管理器 · 启动动画
 
-    序列：
-      1. 本体 CST-PILOT（方块 ANSI Shadow）滚入
-      2. 日出色遮罩自下而上掩蔽
-      3. 推入 Next（Sunset 风格艺术字）
+    配色取自 ascii-banner.oaix.tech 的 Sunset 主题：
+      渐变 #FB7185 (rose) -> #F59E0B (amber)
+    自下而上按行插值，模拟日出。
 
-    每帧清屏重绘，不依赖光标定位。
+    序列：
+      1. 本体 CST-PILOT 滚入
+      2. Sunset 色遮罩自下而上掩蔽
+      3. 推入 Next（Sunset 字形）
 #>
 
 # ---------------------------------------------------------------- 字形
-# 本体：ANSI Shadow 方块风格
 $script:ArtCstpilot = @(
     ' ██████╗███████╗████████╗      ██████╗ ██╗██╗      ██████╗ ████████╗'
     '██╔════╝██╔════╝╚══██╔══╝      ██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝'
@@ -20,7 +21,6 @@ $script:ArtCstpilot = @(
     ' ╚═════╝╚══════╝   ╚═╝         ╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝   '
 )
 
-# Next：Sunset 风格（主人提供的字形，12 行）
 $script:ArtNext = @(
     '     ...     ...                                           s    '
     '  .=*8888n.."%888:                                        :8    '
@@ -36,16 +36,37 @@ $script:ArtNext = @(
     '    ""        `"`          "YP''                                '
 )
 
-# ---------------------------------------------------------------- 日出配色
-# 自下而上：深紫 -> 品红 -> 橙红 -> 金黄 -> 浅金
-$script:SunrisePalette = @(
-    [ConsoleColor]::DarkMagenta   # 深紫（最底）
-    [ConsoleColor]::Magenta       # 品红
-    [ConsoleColor]::DarkRed       # 暗红
-    [ConsoleColor]::Red           # 橙红
-    [ConsoleColor]::DarkYellow    # 橙黄
-    [ConsoleColor]::Yellow        # 金黄
+# ---------------------------------------------------------------- Sunset 配色
+# 源站和渐变：#FB7185 (rose) -> #F59E0B (amber)
+$script:SunsetFrom = @(0xFB, 0x71, 0x85)   # #FB7185
+$script:SunsetTo   = @(0xF5, 0x9E, 0x0B)   # #F59E0B
+
+# 预生成 12 档 RGB（自下而上：底部 rose，顶部 amber）
+$script:SunsetRamp = @()
+for ($i = 0; $i -lt 12; $i++) {
+    $t = $i / 11.0
+    $r = [int]($script:SunsetFrom[0] + ($script:SunsetTo[0] - $script:SunsetFrom[0]) * $t)
+    $g = [int]($script:SunsetFrom[1] + ($script:SunsetTo[1] - $script:SunsetFrom[1]) * $t)
+    $b = [int]($script:SunsetFrom[2] + ($script:SunsetTo[2] - $script:SunsetFrom[2]) * $t)
+    $script:SunsetRamp += , @($r, $g, $b)
+}
+
+# ConsoleColor 只能 16 色，预映射到最接近的可用色
+$script:ConsoleRamp = @(
+    [ConsoleColor]::Magenta       # #FB7185 玫瑰红 -> 品红
+    [ConsoleColor]::Magenta
+    [ConsoleColor]::Red
+    [ConsoleColor]::Red
+    [ConsoleColor]::DarkYellow
+    [ConsoleColor]::DarkYellow
+    [ConsoleColor]::Yellow
+    [ConsoleColor]::Yellow
+    [ConsoleColor]::Yellow
+    [ConsoleColor]::Yellow
+    [ConsoleColor]::Yellow
+    [ConsoleColor]::Yellow
 )
+
 $script:MaskColor = [ConsoleColor]::DarkMagenta
 $script:MaskChar = '▓'
 
@@ -56,13 +77,13 @@ function Get-ArtWidth {
     return $w
 }
 
-# 按行位置取日出色（越靠下越深）
-function Get-SunriseColor([int]$row, [int]$total) {
-    if ($total -le 1) { return $script:SunrisePalette[0] }
-    $ratio = $row / ($total - 1)          # 0 = 顶(浅), 1 = 底(深)
-    $idx = [int]([Math]::Round((1 - $ratio) * ($script:SunrisePalette.Count - 1)))
-    $idx = [Math]::Max(0, [Math]::Min($script:SunrisePalette.Count - 1, $idx))
-    return $script:SunrisePalette[$idx]
+# 按行取 Sunset 色：$row=0 是顶部（amber），越往下越接近 rose
+function Get-SunsetColor([int]$row, [int]$total) {
+    if ($total -le 1) { return $script:ConsoleRamp[0] }
+    $ratio = $row / ($total - 1)
+    $idx = [int]([Math]::Round($ratio * ($script:ConsoleRamp.Count - 1)))
+    $idx = [Math]::Max(0, [Math]::Min($script:ConsoleRamp.Count - 1, $idx))
+    return $script:ConsoleRamp[$idx]
 }
 
 function Write-Frame {
@@ -80,11 +101,11 @@ function Write-Frame {
 .SYNOPSIS
     播放完整启动动画。
 .PARAMETER Speed
-    帧间隔倍率，1 = 默认，2 = 慢一倍，0.5 = 快一倍。
+    帧间隔倍率，1 = 默认，2 = 慢一倍。
 .PARAMETER Skip
-    跳过动画，直接显示 Next。
+    跳过动画直接显示 Next。
 .PARAMETER NoClear
-    不清屏（保留上方已有输出）。
+    不清屏。
 #>
 function Show-CstpnBootLogo {
     param(
@@ -101,21 +122,20 @@ function Show-CstpnBootLogo {
     if ($Skip) {
         if (-not $NoClear) { Clear-Host }
         for ($i = 0; $i -lt $next.Count; $i++) {
-            Write-Host $next[$i] -ForegroundColor (Get-SunriseColor $i $next.Count)
+            Write-Host $next[$i] -ForegroundColor (Get-SunsetColor $i $next.Count)
         }
         Write-Host ''
         return
     }
 
-    # ---------------- 第 1 幕：本体滚入（逐行显现，放慢）----------------
-    # 每行停留更久，确保肉眼可见
+    # ---- 第 1 幕：本体滚入 ----
     for ($i = 1; $i -le $h; $i++) {
         $frame = @()
         $colors = @()
         for ($r = 0; $r -lt $h; $r++) {
             if ($r -lt $i) {
                 $frame += $cstpilot[$r]
-                $colors += (Get-SunriseColor $r $h)
+                $colors += (Get-SunsetColor $r $h)
             } else {
                 $frame += ''
             }
@@ -123,10 +143,9 @@ function Show-CstpnBootLogo {
         Write-Frame -Lines $frame -Colors $colors
         Start-Sleep -Milliseconds ([int](140 * $Speed))
     }
-    # 完整本体停留
     Start-Sleep -Milliseconds ([int](500 * $Speed))
 
-    # ---------------- 第 2 幕：日出色遮罩自下而上 ----------------
+    # ---- 第 2 幕：Sunset 遮罩自下而上 ----
     for ($level = 1; $level -le $h; $level++) {
         $frame = @()
         $colors = @()
@@ -137,7 +156,7 @@ function Show-CstpnBootLogo {
                 $colors += $script:MaskColor
             } else {
                 $frame += $cstpilot[$r]
-                $colors += (Get-SunriseColor $r $h)
+                $colors += (Get-SunsetColor $r $h)
             }
         }
         Write-Frame -Lines $frame -Colors $colors
@@ -145,7 +164,7 @@ function Show-CstpnBootLogo {
     }
     Start-Sleep -Milliseconds ([int](220 * $Speed))
 
-    # ---------------- 第 3 幕：Next 自下而上推入 ----------------
+    # ---- 第 3 幕：Next 自下而上推入 ----
     $nextH = $next.Count
     for ($level = 1; $level -le $nextH; $level++) {
         $frame = @()
@@ -159,16 +178,16 @@ function Show-CstpnBootLogo {
         for ($k = $nextH - $level; $k -lt $nextH; $k++) {
             if ($k -lt 0) { continue }
             $frame += $next[$k]
-            $colors += (Get-SunriseColor $k $nextH)
+            $colors += (Get-SunsetColor $k $nextH)
         }
         Write-Frame -Lines $frame -Colors $colors
         Start-Sleep -Milliseconds ([int](90 * $Speed))
     }
 
-    # 收尾：完整 Next，日出配色
+    # 收尾
     Start-Sleep -Milliseconds ([int](300 * $Speed))
     for ($i = 0; $i -lt $nextH; $i++) {
-        Write-Host $next[$i] -ForegroundColor (Get-SunriseColor $i $nextH)
+        Write-Host $next[$i] -ForegroundColor (Get-SunsetColor $i $nextH)
     }
     Write-Host ''
 }
