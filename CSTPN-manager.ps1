@@ -254,7 +254,11 @@ function Ensure-RemoteFile([string]$relPath, [string]$branch) {
 function Get-State([string]$Kit, $item) {
     if ($item.Id -eq 'WEB_INP_ADD') {
         $fe = Test-Path -LiteralPath (Join-Path $Kit "$($script:StaticRel)/CSTPN-session-import.js") -PathType Leaf
-        $be = Select-String -Path (Join-Path $Kit 'agent/home/extensions/web/server/api.ts') -Pattern 'cstpn-import' -Quiet -ErrorAction SilentlyContinue
+        $apiFile = Join-Path $Kit 'agent/home/extensions/web/server/api.ts'
+        $be = $false
+        if (Test-Path -LiteralPath $apiFile -PathType Leaf) {
+            $be = [bool](Select-String -Path $apiFile -Pattern 'cstpn-import' -Quiet -ErrorAction SilentlyContinue)
+        }
         return ($fe -and $be)
     }
     if (-not $item.Marker) { return $false }
