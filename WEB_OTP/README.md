@@ -1,54 +1,85 @@
 # WEB_OTP
 
-为 CST Pilot 的 **Web 端**提供 CSTP Next 的体验增强补丁。
+CSTP Next 为 CST Pilot Web 端提供的体验增强补丁。
 
-所有 CSTP Next 脚本统一使用 **`CSTPN-` 前缀**。
+所有脚本统一使用 **`CSTPN-` 前缀**。
 
-## 当前补丁
+## 补丁一览
 
-### OA 登录文案
+| 补丁 | 安装 | 回滚 |
+| --- | --- | --- |
+| 会话导出 + 动态码登录 | `CSTPN-apply-web-enhance.ps1` | `CSTPN-rollback-web-enhance.ps1` |
+| 账户页 OA 登录文案 | `CSTPN-apply-oa-login-text.ps1` | `CSTPN-rollback-oa-login-text.ps1` |
 
-把账户页的「扫码登录」文案改为「OA登录」，并在 CSTOA 扫码卡片下方新增动态码登录入口。
+## Web 增强（会话导出 + 动态码登录）
 
-| 文件 | 说明 |
+### 安装
+
+```powershell
+# 预演
+.\CSTPN-apply-web-enhance.ps1 -Target 'C:\path\to\cst-pilot' -DryRun
+
+# 安装
+.\CSTPN-apply-web-enhance.ps1 -Target 'C:\path\to\cst-pilot'
+```
+
+### 功能
+
+**会话导出** — 右键会话菜单新增「导出（CSTP Next）」：
+
+- 单选：导出被右键的会话
+- 管理模式多选：逐个导出全部已勾选会话
+- 导出完成后自动弹出资源管理器，定位到 `artifacts\<日期>\sessions\`
+
+菜单位置保持「危险操作在最后」的语义：
+
+```
+单选：重命名 | 管理 | 导出（CSTP Next） | ─── | 删除
+多选：        导出（CSTP Next） | 删除
+```
+
+**动态码登录** — CSTOA 扫码卡片下方新增「使用动态码登录（CSTP Next）」，
+在新标签页打开官方授权页。
+
+### 复用后端既有接口
+
+不新增路由、不接受任意路径：
+
+| 接口 | 用途 |
 | --- | --- |
-| `CSTPN-apply-oa-login-text.ps1` | 打补丁主脚本（含备份与校验） |
-| `CSTPN-apply-oa-login-text.cmd` | Windows 双击入口 |
-| `CSTPN-rollback-oa-login-text.ps1` | 一键撤回全部修改 |
-| `CSTPN-rollback-oa-login-text.cmd` | Windows 双击入口 |
+| `POST /api/sessions/<id>/exports` | 创建导出任务 |
+| `GET /api/exports/<exportId>` | 轮询状态 |
+| `POST /api/exports/<exportId>/open` | 启动本机文件管理器 |
 
-### 改动内容
+保存目录由后端固定在 `artifacts/<日期>/sessions/`，页面无法指定路径。
 
-1. `assets/account-*.js` 文案：
-   - `"重新扫码登录"` → `"OA登录"`
-   - `"扫码登录"` → `"OA登录"`
-   - `APIKEY 登录`、`退出 CSTOA` 保持不变
-2. 新增 `static/CSTPN-cstoa-open-auth.js`
-   - 在 CSTOA 扫码卡片下方追加按钮「使用动态码登录（CSTP Next）」
-   - 地址取自后端 `GET /api/auth/cstoa/oauth/status` 的
-     `deviceCode.verificationUri`（即官方授权页），不构造地址
-3. `static/index.html` 的 `</head>` 前引入上述脚本
+### 导出参数
 
-> 只改文案与新增入口，不触碰任何登录逻辑。
+```json
+{ "format": "html", "theme": "dark", "includeThinking": false, "includeTools": false }
+```
 
-## 用法
+### 回滚
 
-```bat
-rem 预演（不写文件）
-CSTPN-apply-oa-login-text.cmd -DryRun
+```powershell
+.\CSTPN-rollback-web-enhance.ps1 -Target 'C:\path\to\cst-pilot'
+```
 
-rem 打补丁
-CSTPN-apply-oa-login-text.cmd
+删除两个 `.js` 并移除 `index.html` 里对应的 `<script>` 引用。
 
-rem 指定目标
-CSTPN-apply-oa-login-text.cmd -Target D:\kits\cst-pilot
+## 账户页 OA 登录文案
 
-rem 一键撤回
-CSTPN-rollback-oa-login-text.cmd
+把「重新扫码登录」「扫码登录」改为「OA登录」，`APIKEY 登录` 与 `退出 CSTOA` 保持不变。
+
+```powershell
+.\CSTPN-apply-oa-login-text.ps1  -Target 'C:\path\to\cst-pilot' -DryRun   # 预演
+.\CSTPN-apply-oa-login-text.ps1  -Target 'C:\path\to\cst-pilot'           # 安装
+.\CSTPN-rollback-oa-login-text.ps1 -Target 'C:\path\to\cst-pilot'         # 回滚
 ```
 
 ## 说明
 
-- 打补丁前自动备份到 `<目标>\patch-backup-oa-text-<时间戳>`
-- 回滚优先使用备份还原，只有当前文件被改过才还原，避免覆盖后续升级
-- 两个脚本均可重复运行，已处理过的项自动跳过
+- 两个补丁互相独立，可单独安装/回滚
+- 安装前自动备份到 `<目标>\patch-backup-*`
+- 可重复运行，已就位的项自动跳过
+- 修改后需重启 CST Pilot，并按 `Ctrl+F5` 强刷
