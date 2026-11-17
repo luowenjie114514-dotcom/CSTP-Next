@@ -16,10 +16,10 @@
 
 | 目录 | 功能 |
 | --- | --- |
-| [`WEB_EXP`](WEB_EXP) | 会话导出（右键 + 导出选项页，浏览器下载） |
+| [`WEB_EXP`](WEB_EXP) | 会话导出（PNG / HTML / JSON，浏览器下载） |
 | [`WEB_ID`](WEB_ID) | 会话 ID 显示与复制 |
-| [`WEB_INP`](WEB_INP) | 会话导入（生成文件 + 拖入目录） |
-| [`WEB_OTP`](WEB_OTP) | 动态码登录入口、账户页 OA 登录文案 |
+| [`WEB_INP`](WEB_INP) | 会话导入（半自动） |
+| [`WEB_OTP`](WEB_OTP) | 动态码登录入口 + 账户页 OA 文案 |
 | [`WEB_SRH`](WEB_SRH) | 会话列表搜索 |
 
 ## 安装
@@ -31,6 +31,8 @@ cd CSTP-Next
 .\WEB_EXP\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot' -DryRun   # 预演
 .\WEB_EXP\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot'           # 安装
 ```
+
+或用管理器统一管理：`.\CSTPN-manager.ps1 -Target '...'`
 
 改完重启 CST Pilot + `Ctrl + F5` 强刷。
 
