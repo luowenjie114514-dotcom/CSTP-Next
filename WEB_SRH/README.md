@@ -1,15 +1,15 @@
 # WEB_SRH
 
-会话列表快速搜索（Web 端）。
+会话列表搜索（Web 端）。
 
 ## 功能
 
-侧栏会话列表顶部注入搜索框：
+侧栏会话列表顶部搜索框：
 
 | 交互 | 行为 |
 | --- | --- |
 | 输入 | 按标题 / sessionID 实时过滤 |
-| `Ctrl / Cmd + K` | 聚焦搜索框 |
+| `Ctrl / Cmd + K` | 聚焦 |
 | `Esc` | 清空并失焦 |
 
 ## 文件
@@ -23,12 +23,12 @@
 ## 用法
 
 ```powershell
-.\CSTPN-apply-srh.ps1    -Target 'C:\path\to\cst-pilot' -DryRun
-.\CSTPN-apply-srh.ps1    -Target 'C:\path\to\cst-pilot'
-.\CSTPN-rollback-srh.ps1 -Target 'C:\path\to\cst-pilot'
+.\CSTPN-apply-srh.ps1    -Target 'C:\path\to\cst-pilot' -DryRun   # 预演
+.\CSTPN-apply-srh.ps1    -Target 'C:\path\to\cst-pilot'           # 安装
+.\CSTPN-rollback-srh.ps1 -Target 'C:\path\to\cst-pilot'           # 回滚
 ```
 
-> `CSTPN-session-search.js` 需与 `.ps1` 放在同一目录，或用 `-Source` 指定。
+`.js` 需与 `.ps1` 放同一目录，或用 `-Source` 指定。
 
 ## 说明
 
