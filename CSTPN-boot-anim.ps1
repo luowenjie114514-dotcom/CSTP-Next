@@ -12,6 +12,61 @@
       3. 推入 Next
 #>
 
+# PS 5.1 不支持 `e 转义（会退化成字母 e），必须用 [char]27
+$script:ESC = [char]27
+$script:Reset = "$($script:ESC)[0m"
+
+# Windows 控制台默认不解析 ANSI，需要启用 VT 处理（ENABLE_VIRTUAL_TERMINAL_PROCESSING）
+$script:TrueColorReady = $null
+
+function Enable-VirtualTerminal {
+    if ($null -ne $script:TrueColorReady) { return $script:TrueColorReady }
+
+    # 非交互输出（重定向/管道）直接禁用，避免写入转义码
+    try {
+        if ([Console]::IsOutputRedirected) {
+            $script:TrueColorReady = $false
+            return $false
+        }
+    } catch {
+        $script:TrueColorReady = $false
+        return $false
+    }
+
+    try {
+        if (-not ('CstpnConsole' -as [type])) {
+            Add-Type -Namespace '' -Name 'CstpnConsole' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr GetStdHandle(int nStdHandle);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);
+'@ -ErrorAction Stop
+        }
+
+        $handle = [CstpnConsole]::GetStdHandle(-11)   # STD_OUTPUT_HANDLE
+        $mode = [uint32]0
+        if (-not [CstpnConsole]::GetConsoleMode($handle, [ref]$mode)) {
+            $script:TrueColorReady = $false
+            return $false
+        }
+
+        $ENABLE_VT = 0x0004
+        if (($mode -band $ENABLE_VT) -eq 0) {
+            if (-not [CstpnConsole]::SetConsoleMode($handle, $mode -bor $ENABLE_VT)) {
+                $script:TrueColorReady = $false
+                return $false
+            }
+        }
+        $script:TrueColorReady = $true
+        return $true
+    } catch {
+        $script:TrueColorReady = $false
+        return $false
+    }
+}
+
 # ---------------------------------------------------------------- 字形
 $script:ArtCstpilot = @(
     ' ██████╗███████╗████████╗      ██████╗ ██╗██╗      ██████╗ ████████╗'
@@ -45,7 +100,7 @@ $script:SunsetStops = @(
 )
 
 $script:UseTrueColor = $true
-$script:MaskColorSeq = "`e[38;2;120;40;160m"   # 遮罩用深紫
+$script:MaskColorSeq = "$($script:ESC)[38;2;120;40;160m"   # 遮罩用深紫
 
 # 在渐变上取色：$t = 0..1
 function Get-GradientRgb([double]$t) {
@@ -63,10 +118,9 @@ function Get-GradientRgb([double]$t) {
 }
 
 function Format-TrueColor($rgb) {
-    return "`e[38;2;$($rgb.r);$($rgb.g);$($rgb.b)m"
+    return "$($script:ESC)[38;2;$($rgb.r);$($rgb.g);$($rgb.b)m"
 }
 
-$script:Reset = "`e[0m"
 
 # 给一行按列上色（照搬源站 Ae 函数逻辑）
 function Get-UniformWidth {
@@ -81,6 +135,7 @@ function Get-UniformWidth {
 function Format-ColorLine([string]$Line, [int]$Width = 0) {
     if (-not $Line) { return '' }
     if (-not $script:UseTrueColor) { return $Line }
+    if (-not (Enable-VirtualTerminal)) { return $Line }
 
     # 统一按最长行宽度插值（照搬源站 a = Math.max(...) 的做法）
     if ($Width -le 0) { $Width = Get-UniformWidth }
@@ -144,6 +199,7 @@ function Show-CstpnBootLogo {
     )
 
     if ($NoColor) { $script:UseTrueColor = $false }
+    $null = Enable-VirtualTerminal
 
     $cstpilot = $script:ArtCstpilot
     $next = $script:ArtNext
