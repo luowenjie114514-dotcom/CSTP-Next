@@ -2,7 +2,7 @@
  * CSTP Next · 会话增强包：内文搜索 / 置顶 / 行内重命名。
  *
  * 三个功能（均已核查原生空白）：
- * 1. 会话内文本搜索：Ctrl+F 拉起搜索条，高亮命中、逐个跳转
+ * 1. 会话内文本搜索：进入会话后页头出现搜索按钮（三点菜单左侧），点击拉起搜索条
  * 2. 会话置顶：右键菜单加「置顶/取消置顶」，localStorage 持久化
  * 3. 行内重命名：右键「重命名」和双击会话行，直接在列表里改名
  *    （原生走 window.prompt 丑弹框，本脚本改为行内 input）
@@ -49,6 +49,7 @@
 /* 高亮 */
 .cstpn-hl{background:rgba(255,196,64,.45);color:inherit;border-radius:2px}
 .cstpn-hl[data-active="1"]{background:rgba(255,150,40,.85);color:#14181d}
+.cstpn-find-btn{display:inline-flex;align-items:center;justify-content:center}
 `;
 		document.head.appendChild(style);
 	}
@@ -252,11 +253,6 @@
 			);
 		}
 
-		// 搜索（总是可用）
-		items.push(
-			buildItem("会话内搜索", ["M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z"], () => openFindbar()),
-		);
-
 		// 批量分隔
 		if (items.length) {
 			const hr = document.createElement("hr");
@@ -428,21 +424,71 @@
 		}
 	});
 
-	// Ctrl+F 拉起搜索
-	document.addEventListener(
-		"keydown",
-		(event) => {
-			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
-				const inEditor = document.activeElement?.closest("textarea, input, [contenteditable]");
-				if (inEditor) return; // 编辑器里让原生行为走
-				const conv = document.querySelector(".conversation");
-				if (!conv) return;
-				event.preventDefault();
-				openFindbar();
-			}
-		},
-		true,
-	);
+	// ================================================================ 页头搜索按钮
+	/**
+	 * 在会话页头「三点菜单」左侧注入搜索按钮。
+	 * 只在进入具体会话时出现（.chat-header 存在且非空态）。
+	 */
+	function ensureHeaderButton() {
+		const header = document.querySelector(".chat-header");
+		if (!header) return;
+		// 已在则只更新提示
+		if (header.querySelector("[data-cstpn-find]")) return;
+
+		const trigger = header.querySelector(".chat-menu-trigger");
+		if (!trigger) return; // 还没渲染菜单按钮，等下一轮
+
+		injectStyle();
+		const btn = document.createElement("button");
+		btn.type = "button";
+		btn.className = "chat-menu-trigger cstpn-find-btn";
+		btn.setAttribute("data-cstpn-find", "");
+		btn.setAttribute("aria-label", "会话内搜索");
+		btn.title = "会话内搜索";
+		btn.innerHTML =
+			'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+
+		btn.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			openFindbar();
+		});
+
+		// 插在三点菜单按钮之前，保持右侧原有关闭/菜单顺序
+		trigger.parentElement.insertBefore(btn, trigger);
+	}
+
+	// ================================================================ 快捷键设置项
+	/**
+	 * 在 设置 → 快捷键 → 聊天操作 列表末尾追加本插件的快捷键说明。
+	 * 原生列表是打包文件里的硬编码数组，无法改源码，故用 DOM 追加一行。
+	 * 结构与原生一致：.settings-flat-row > span(命令) + kbd(按键)
+	 */
+	const SHORTCUT_ITEMS = [
+		{ command: "会话内搜索", keys: "会话页头搜索按钮" },
+	];
+
+	function ensureShortcutRows() {
+		const card = document.querySelector(".settings-shortcuts");
+		if (!card) return;
+		if (card.querySelector("[data-cstpn-sc]")) return;
+
+		for (const item of SHORTCUT_ITEMS) {
+			const row = document.createElement("div");
+			row.className = "settings-flat-row";
+			row.setAttribute("data-cstpn-sc", "");
+
+			const label = document.createElement("span");
+			label.textContent = item.command;
+
+			const kbd = document.createElement("kbd");
+			kbd.className = "settings-key-kbd";
+			kbd.textContent = item.keys;
+
+			row.append(label, kbd);
+			card.appendChild(row);
+		}
+	}
 
 	// ================================================================ 双击重命名
 	document.addEventListener("dblclick", (event) => {
@@ -463,6 +509,8 @@
 	function tick() {
 		try {
 			ensureMenu();
+			ensureHeaderButton();
+			ensureShortcutRows();
 			applyPin();
 		} catch {
 			/* 静默 */
@@ -478,5 +526,5 @@
 	}
 	window.setInterval(tick, TICK_MS);
 
-	window.__cstpnSess = { togglePin, pinned, renameInline, openFindbar };
+	window.__cstpnSess = { togglePin, pinned, renameInline, openFindbar, ensureShortcutRows };
 })();
