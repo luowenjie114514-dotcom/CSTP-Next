@@ -80,8 +80,6 @@
 .cstpn-select-item[data-selected="true"]{background:rgba(127,127,127,.24);font-weight:600}
 .cstpn-check{display:flex;align-items:center;gap:8px;font-size:var(--font-ui,13px);cursor:pointer}
 .cstpn-check input{margin:0;cursor:pointer}
-.cstpn-generate{justify-self:start;align-items:center;gap:var(--space-inline,8px);min-height:var(--control-field,38px);padding:10px var(--space-section,20px);border:none;border-radius:var(--radius-control,10px);color:var(--app-send-icon,#fff);background:var(--app-send,#1a2024);font-size:var(--font-ui,13px);font-weight:600;display:inline-flex;cursor:pointer;font-family:inherit}
-.cstpn-generate:disabled{opacity:.6;cursor:default}
 .cstpn-note{font-size:var(--font-ui,13px);color:var(--chat-muted,#6b7280);margin:0}
 `;
 		document.head.appendChild(style);
@@ -674,6 +672,16 @@ ${blocks}
 			h1.appendChild(badge);
 		}
 
+		// 原生按钮在 fieldset 之外（section.export-controls 的直接子元素），
+		// 因此不能靠清空 fieldset 去掉它。这里改为接管它：
+		// 换文案、标记已接管，点击由 capture 阶段的拦截器处理。
+		const origin = main.querySelector(".export-generate");
+		if (origin && !origin.hasAttribute(TAKEN)) {
+			origin.setAttribute(TAKEN, "");
+			origin.textContent = "导出并下载";
+			origin.removeAttribute("disabled");
+		}
+
 		const fieldset = main.querySelector(EXPORT_FIELDSET);
 		if (!fieldset || fieldset.hasAttribute(TAKEN)) return;
 
@@ -686,7 +694,6 @@ ${blocks}
 		legendEl.textContent = legendText;
 		fieldset.appendChild(legendEl);
 
-		const sessionId = /\/s\/([a-zA-Z0-9_-]+)\/export/.exec(location.pathname)?.[1] ?? "";
 		const panel = document.createElement("div");
 		panel.style.cssText = "display:grid;gap:var(--space-group,16px)";
 
@@ -718,16 +725,6 @@ ${blocks}
 
 		panel.appendChild(checkbox("包含思考过程", options.includeThinking, (v) => { options.includeThinking = v; }));
 		panel.appendChild(checkbox("包含工具调用结果", options.includeTools, (v) => { options.includeTools = v; }));
-
-		const button = document.createElement("button");
-		button.type = "button";
-		button.className = "cstpn-generate";
-		button.textContent = "导出并下载";
-		button.addEventListener("click", () => {
-			if (!sessionId) return toast("未能识别会话 ID", "error", 3000);
-			void runExport([sessionId], { ...options });
-		});
-		panel.appendChild(button);
 
 		const note = document.createElement("p");
 		note.className = "cstpn-note";
