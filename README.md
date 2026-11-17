@@ -1,6 +1,6 @@
 # CSTP Next
 
-**CSTP Next** 是在不违反安全政策前提下为程序进行的体验优化脚本集，请以 [CST Pilot 本体](https://github.com/SCAU-Computer-Serving-Team/cst-pilot/) 为标准。
+**CSTP Next** 是在不违反安全政策前提下为前端进行的体验优化脚本集，请以 [CST Pilot 本体](https://github.com/SCAU-Computer-Serving-Team/cst-pilot/) 为标准。
 
 > 本仓库的 `main` 分支已清空归档，实际内容在 [`patch`](https://github.com/luowenjie114514-dotcom/CSTP-Next/tree/patch) 分支。
 
