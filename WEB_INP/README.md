@@ -1,65 +1,51 @@
 # WEB_INP
 
-CSTP Next · **会话导入**（Web 端，半自动）。
-
-与 [WEB_EXP](../WEB_EXP)（导出）配套使用。
+会话导入（Web 端，半自动）。
 
 ## 功能
 
-设置 → 常规页新增 **「导入会话记录（CSTP Next）」** 卡片：
+设置 → 常规页新增「导入会话记录（CSTP Next）」：
 
-1. 填写/确认**目标项目目录**（决定会话归属哪个项目）
-2. 选择之前导出的 `.json` 文件
-3. 浏览器内解析并转换为 Pi 会话 `.jsonl`，立即下载
-4. 界面给出目标目录**完整路径**，支持一键复制
-5. 把下载的文件拖进该目录 → 重启/刷新 → 会话出现在列表，可继续对话
+1. 填目标项目目录
+2. 选之前导出的 `.json` 文件
+3. 浏览器内转成 Pi 会话 `.jsonl` 并下载
+4. 界面给出目标目录完整路径，支持一键复制
+5. 把文件拖进该目录 → 重启 → 会话出现在列表，可继续对话
 
-## 为什么是半自动
+支持的输入：本插件导出的 JSON、JSON 数组、JSONL 原文。
 
-把对话写回 Pi 会话目录**必须落盘**，而浏览器出于安全沙箱无法写入任意路径。
+仅导入文本消息，图片与工具调用参数会被忽略。
 
-- **半自动（本目录，patch 分支）**：浏览器生成合法文件 + 给出精确路径 + 一次拖放。零风险，可随版本升级保留。
-- **全自动（add 分支）**：需要给 `web/server/api.ts` 新增写接口。这会破坏 `SHA256SUMS` 校验、升级后可能被覆盖，属激进方案。
+## 文件
 
-## 会话文件格式（实测所得，非猜测）
+| 文件 | 作用 |
+| --- | --- |
+| `CSTPN-apply-idimp.ps1` | 安装（同时装 WEB_ID 与 WEB_INP） |
+| `CSTPN-rollback-idimp.ps1` | 一键撤回 |
+| `CSTPN-session-import.js` | 前端脚本 |
+
+## 用法
+
+```powershell
+.\CSTPN-apply-idimp.ps1    -Target 'C:\path\to\cst-pilot' -DryRun
+.\CSTPN-apply-idimp.ps1    -Target 'C:\path\to\cst-pilot'
+.\CSTPN-rollback-idimp.ps1 -Target 'C:\path\to\cst-pilot'
+```
+
+> `CSTPN-session-import.js` 需与 `.ps1` 放在同一目录，或用 `-Source` 指定。
+
+## 说明
+
+写回会话目录需要落盘，浏览器无法写入任意路径，因此本分支为半自动（多一步拖放）。
+
+需要全自动请使用 [`add`](../tree/add) 分支。
+
+## 会话文件格式
 
 ```
 ~/.pi/agent/sessions/<cwd 编码目录>/<ISO时间戳>_<session.id>.jsonl
 ```
 
 - 目录编码：`"--" + cwd 中所有 / \ : 替换为 "-" + "--"`
-  例：`C:\Users\A\proj` → `--C--Users-A-proj--`
-- 每行一个 JSON；首行 `type=session`，其后 `message` 行用 `id`/`parentId` 串链
+- 每行一个 JSON，首行 `type=session`，其后 `message` 行用 `id`/`parentId` 串链
 - 文件名中的 UUID 必须与 `session.id` 一致
-
-## 支持的输入
-
-| 格式 | 说明 |
-| --- | --- |
-| 本插件导出的 JSON | `{ title, messages: [...] }` |
-| JSON 数组 | 取第一个元素 |
-| JSONL 原文 | 直接识别 `type=session` + `type=message` 行 |
-
-只导入文本消息；图片与工具调用参数会被忽略（界面上有说明）。
-
-## 安全性
-
-- 全程在浏览器内完成，**不写本地文件、不调用任何写接口**
-- 只读取用户主动选择的文件
-- 生成的内容结构经白名单校验，非法结构直接拒绝并提示
-
-## 文件
-
-| 文件 | 说明 |
-| --- | --- |
-| `CSTPN-apply-idimp.ps1` | 安装（同时装 WEB_ID 与 WEB_INP） |
-| `CSTPN-rollback-idimp.ps1` | 一键撤回 |
-| `CSTPN-session-import.js` | 前端脚本 |
-
-## 实测验证（真实 Edge 157 headless）
-
-- 目录名规则与真实会话目录**逐字一致** ✓
-- 指定 cwd 后生成的 `session.cwd` 与目录推导正确 ✓
-- 消息 `id`/`parentId` 链完整 ✓
-- JSON 与 JSONL 两种输入均可解析 ✓
-- 卡片正确挂载到常规页，含 cwd 输入框与两个文件选择入口 ✓
