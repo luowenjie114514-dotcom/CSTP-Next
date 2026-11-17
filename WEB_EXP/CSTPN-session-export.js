@@ -1,20 +1,18 @@
 /**
- * CSTP Next · 会话右键菜单「导出（CSTP Next）」增强。
+ * CSTP Next · 会话导出（浏览器下载版）。
  *
- * 为什么是独立脚本：assets/* 是带内容哈希的强缓存文件，改动不会到达已打开过的
- * 浏览器；本文件不带哈希，由 index.html 引入，刷新即生效，删除引用即恢复。
+ * 为什么不用后端导出：
+ * 后端 /api/sessions/<id>/exports 依赖 puppeteer-core 驱动本机 Edge/Chrome 渲染。
+ * 在管理员权限或受限环境下浏览器常启动失败（export_browser_launch_failed），
+ * 且导出目录固定、无法让用户选位置。
  *
- * 行为：
- * - 单选模式：右键会话 → 菜单多出「导出（CSTP Next）」，导出该会话。
- * - 管理模式：勾选多个会话 → 右键其中任一 → 菜单多出「导出（CSTP Next）」，
- *   逐个导出所有已勾选的会话。
- * - 导出完成后自动调用 /open 接口，弹出资源管理器定位到保存目录。
+ * 本实现改为纯前端：
+ * 1. GET /api/sessions/<id> 取会话快照；
+ * 2. 在页面内生成自包含 HTML（样式内嵌，无外部依赖）；
+ * 3. 用 Blob + <a download> 触发下载，由浏览器的「另存为」对话框让用户选路径。
  *
- * 复用后端既有能力，不新增接口、不落任意路径：
- *   POST /api/sessions/<id>/exports   {format, theme, includeThinking, includeTools}
- *   GET  /api/exports/<exportId>      轮询状态
- *   POST /api/exports/<exportId>/open 启动本机文件管理器
- * 保存目录由后端固定在 artifacts/<日期>/sessions/，页面无法指定路径。
+ * 优点：不依赖后端渲染、不需要浏览器子进程、路径由用户决定。
+ * 安全：只读 GET，不写任何本地文件，不执行会话内容中的脚本。
  */
 (() => {
 	const MENU = ".session-menu";
@@ -23,17 +21,7 @@
 	const ROW = "[data-session-id]";
 	const TICK_MS = 400;
 
-	const EXPORT_OPTIONS = {
-		format: "html",
-		theme: "dark",
-		includeThinking: false,
-		includeTools: false,
-	};
-
-	const state = {
-		busy: false,
-		toast: null,
-	};
+	const state = { busy: false, toast: null };
 
 	// ---------------------------------------------------------------- 样式
 	function injectStyle() {
@@ -51,7 +39,6 @@
 		document.head.appendChild(style);
 	}
 
-	// ---------------------------------------------------------------- 提示
 	function toast(message, tone) {
 		injectStyle();
 		if (!state.toast) {
@@ -81,27 +68,16 @@
 	}
 
 	// ---------------------------------------------------------------- 选中会话
-	/** 最近一次右键命中的会话行（单选模式的主依据）。 */
 	let lastRow = null;
 
-	/**
-	 * 记录 contextmenu 命中的会话行。
-	 * 用捕获阶段监听，早于 React 的 onContextMenu，不阻止原事件。
-	 *
-	 * 注意：这里只做记录，绝不动 DOM。
-	 * 菜单节点由 React 渲染与卸载，手动 remove() 会让 React 卸载时
-	 * 再删一次而抛 NotFoundError（removeChild），导致整页崩溃。
-	 */
 	function trackContextMenu(event) {
 		try {
-			const row = event.target?.closest?.(ROW);
-			lastRow = row || null;
+			lastRow = event.target?.closest?.(ROW) || null;
 		} catch {
 			lastRow = null;
 		}
 	}
 
-	/** 读取当前右键上下文应导出的会话 ID 列表。 */
 	function targetSessionIds() {
 		const rows = [...document.querySelectorAll(ROW)];
 		const selected = rows
@@ -117,54 +93,172 @@
 		const activeId = active?.getAttribute("data-session-id");
 		return activeId ? [activeId] : [];
 	}
-	// ---------------------------------------------------------------- 导出流程
-	async function api(path, init) {
-		const response = await fetch(path, {
+
+	// ---------------------------------------------------------------- 取数据
+	async function fetchSnapshot(sessionId) {
+		const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
 			cache: "no-store",
 			credentials: "same-origin",
-			...init,
-			headers: {
-				...(init?.body ? { "Content-Type": "application/json", "X-CST-Web-Request": "1" } : {}),
-				...(init?.headers || {}),
-			},
 		});
-		const data = await response.json().catch(() => null);
-		if (!response.ok) {
-			const message = data?.error?.message || `请求未完成（HTTP ${response.status}）`;
-			throw new Error(message);
-		}
-		return data;
+		if (!response.ok) throw new Error(`读取会话失败（HTTP ${response.status}）`);
+		return response.json();
 	}
 
-	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	// ---------------------------------------------------------------- 渲染
+	function escapeHtml(value) {
+		return String(value ?? "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#39;");
+	}
 
-	async function waitForExport(exportId, timeoutMs) {
-		const deadline = Date.now() + (timeoutMs || 180000);
-		let delay = 600;
-		while (Date.now() < deadline) {
-			const record = await api(`/api/exports/${encodeURIComponent(exportId)}`);
-			if (record?.status === "completed") return record;
-			if (record?.status === "failed") {
-				throw new Error(record?.error?.message || "导出失败");
+	/** 把一条消息的内容拆成可读的纯文本片段（不保留 HTML，避免注入）。 */
+	function messageText(message) {
+		if (!message) return "";
+		const content = message.content;
+		if (typeof content === "string") return content;
+		if (!Array.isArray(content)) return "";
+		const parts = [];
+		for (const part of content) {
+			if (!part || typeof part !== "object") continue;
+			if (part.type === "text" && typeof part.text === "string") parts.push(part.text);
+			else if (part.type === "thinking" && typeof part.thinking === "string") parts.push(`〔思考〕\n${part.thinking}`);
+			else if (part.type === "toolCall") {
+				const name = part.name ?? "tool";
+				let args = "";
+				try {
+					args = JSON.stringify(part.arguments ?? {});
+				} catch {
+					args = "";
+				}
+				parts.push(`〔调用 ${name}〕\n${args}`);
 			}
-			await sleep(delay);
-			delay = Math.min(delay + 250, 2000);
 		}
-		throw new Error("导出超时，请稍后在 artifacts 目录查看");
+		return parts.join("\n\n");
 	}
 
-	async function exportOne(sessionId) {
-		const idem = crypto.randomUUID();
-		const created = await api(`/api/sessions/${encodeURIComponent(sessionId)}/exports`, {
-			method: "POST",
-			headers: { "Idempotency-Key": idem },
-			body: JSON.stringify(EXPORT_OPTIONS),
-		});
-		const exportId = created?.id;
-		if (!exportId) throw new Error("导出任务创建失败");
-		return waitForExport(exportId);
+	const ROLE_LABEL = {
+		user: "用户",
+		assistant: "助手",
+		toolResult: "工具结果",
+		branchSummary: "分支总结",
+	};
+
+	function buildHtml(sessions) {
+		const now = new Date();
+		const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+		const blocks = sessions
+			.map((snapshot) => {
+				const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+				const messages = entries
+					.map((entry) => entry?.message ?? entry)
+					.filter((message) => message && typeof message === "object");
+
+				const title =
+					snapshot?.title ||
+					messages.find((m) => m.role === "user")?.content?.toString?.().slice(0, 60) ||
+					snapshot?.id ||
+					"会话";
+
+				const rows = messages
+					.map((message) => {
+						const role = message.role ?? "unknown";
+						const label = ROLE_LABEL[role] ?? role;
+						const body = messageText(message).trim();
+						if (!body) return "";
+						const time = message.timestamp
+							? new Date(message.timestamp).toLocaleString("zh-CN")
+							: "";
+						return `<section class="msg msg-${escapeHtml(role)}">
+<header><span class="role">${escapeHtml(label)}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</header>
+<pre>${escapeHtml(body)}</pre>
+</section>`;
+					})
+					.filter(Boolean)
+					.join("\n");
+
+				return `<article class="session">
+<h1>${escapeHtml(title)}</h1>
+<p class="meta">会话 ID：<code>${escapeHtml(snapshot?.id ?? "")}</code> · 消息 ${messages.length} 条</p>
+${rows || '<p class="empty">（无可显示的消息）</p>'}
+</article>`;
+			})
+			.join("\n<hr>\n");
+
+		return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会话导出 · ${escapeHtml(stamp)}</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px 64px;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;background:#fafbfc;color:#1a2024}
+@media (prefers-color-scheme:dark){body{background:#16191d;color:#e8ecef}}
+main{max-width:860px;margin:0 auto}
+h1{font-size:20px;margin:0 0 6px}
+.meta{margin:0 0 20px;font-size:12px;opacity:.62}
+code{font-size:12px;padding:1px 5px;border-radius:4px;background:rgba(127,127,127,.16)}
+.session{margin-bottom:36px}
+.msg{margin:0 0 14px;padding:12px 14px;border-radius:10px;border:1px solid rgba(127,127,127,.22)}
+.msg-user{background:rgba(59,130,246,.07);border-color:rgba(59,130,246,.28)}
+.msg-assistant{background:rgba(127,127,127,.07)}
+.msg header{display:flex;gap:10px;align-items:baseline;margin-bottom:6px}
+.role{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.72}
+time{font-size:11px;opacity:.5}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:14px}
+.empty{opacity:.6;font-size:13px}
+hr{border:none;border-top:1px dashed rgba(127,127,127,.34);margin:34px 0}
+footer{margin-top:48px;font-size:11px;opacity:.45;text-align:center}
+</style>
+</head>
+<body>
+<main>
+${blocks}
+<footer>由 CSTP Next 导出 · ${escapeHtml(stamp)}</footer>
+</main>
+</body>
+</html>`;
 	}
 
+	// ---------------------------------------------------------------- 下载
+	function safeFileName(title) {
+		const cleaned = String(title ?? "会话")
+			.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+		const name = Array.from(cleaned).slice(0, 60).join("") || "会话";
+		const d = new Date();
+		const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+		return `${name}-${stamp}.html`;
+	}
+
+	function download(html, filename) {
+		const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = filename;
+		anchor.rel = "noopener";
+		anchor.style.display = "none";
+		document.body.appendChild(anchor);
+		anchor.click();
+		// 下载触发后即可移除；这里只删自己创建的节点，不碰 React 的 DOM。
+		window.setTimeout(() => {
+			try {
+				anchor.remove();
+			} catch {
+				/* 忽略 */
+			}
+			URL.revokeObjectURL(url);
+		}, 1500);
+	}
+
+	// ---------------------------------------------------------------- 主流程
 	async function runExport(sessionIds) {
 		if (state.busy) return;
 		if (!sessionIds || !sessionIds.length) {
@@ -174,35 +268,29 @@
 		}
 		state.busy = true;
 		const total = sessionIds.length;
-		let done = 0;
-		const lastRecords = [];
 
 		try {
-			for (const sessionId of sessionIds) {
-				toast(total > 1 ? `正在导出 ${done + 1}/${total}…` : "正在导出会话…", "info");
-				const record = await exportOne(sessionId);
-				lastRecords.push(record);
-				done += 1;
+			const snapshots = [];
+			for (let i = 0; i < sessionIds.length; i += 1) {
+				toast(total > 1 ? `正在导出 ${i + 1}/${total}…` : "正在导出会话…", "info");
+				snapshots.push(await fetchSnapshot(sessionIds[i]));
 			}
 
-			const last = lastRecords[lastRecords.length - 1];
-			let opened = false;
-			if (last?.id) {
-				try {
-					await api(`/api/exports/${encodeURIComponent(last.id)}/open`, {
-						method: "POST",
-						headers: { "Idempotency-Key": crypto.randomUUID() },
-						body: JSON.stringify({}),
-					});
-					opened = true;
-				} catch {
-					opened = false;
-				}
-			}
+			const html = buildHtml(snapshots);
+			const first = snapshots[0];
+			const title =
+				first?.title ||
+				(Array.isArray(first?.entries)
+					? first.entries.find((e) => e?.message?.role === "user")?.message?.content
+					: "") ||
+				"会话";
+			const filename =
+				total > 1 ? `会话导出-${total}个-${safeFileName("").replace(/^会话-/, "")}` : safeFileName(String(title));
 
-			const where = last?.directory ? `（${last.directory}）` : "";
-			toast(`已导出 ${total} 个会话${opened ? "，已打开保存目录" : "，保存目录未能自动打开"}${where}`, "ok");
-			window.setTimeout(clearToast, 6000);
+			download(html, filename);
+
+			toast(`已导出 ${total} 个会话，请在浏览器保存对话框中确认位置`, "ok");
+			window.setTimeout(clearToast, 5000);
 		} catch (error) {
 			toast(error instanceof Error && error.message ? error.message : "导出失败，请重试", "error");
 			window.setTimeout(clearToast, 6000);
@@ -211,7 +299,7 @@
 		}
 	}
 
-	// ---------------------------------------------------------------- 菜单注入
+	// ---------------------------------------------------------------- 菜单
 	function icon() {
 		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 		svg.setAttribute("width", "18");
@@ -243,8 +331,7 @@
 			event.preventDefault();
 			event.stopPropagation();
 			const ids = targetSessionIds();
-			// 不手动关闭菜单：菜单由 React 管理，remove() 会让 React 在卸载时
-			// 再次删除同一个节点而抛 removeChild 错误。交由 React 自身的交互关闭。
+			// 不手动关闭菜单：节点归 React 所有，remove() 会导致 removeChild 崩溃。
 			void runExport(ids);
 		});
 		return button;
@@ -270,37 +357,13 @@
 		try {
 			ensureMenu();
 		} catch {
-			// 结构变化时静默跳过，绝不影响原有菜单行为。
+			/* 静默跳过 */
 		}
 	}
 
-	window.__cstpnExport = { runExport, targetSessionIds };
+	window.__cstpnExport = { runExport, targetSessionIds, buildHtml };
 
 	document.addEventListener("contextmenu", trackContextMenu, true);
-
-	/**
-	 * 点击菜单外部时收起菜单。
-	 * 不使用 menu.remove()：节点归 React 所有，手动删除会让 React
-	 * 之后卸载同一个节点时抛 NotFoundError。
-	 * 这里只派发 Esc，复用页面自身的关闭逻辑（既有 keydown 处理）。
-	 */
-	document.addEventListener(
-		"mousedown",
-		(event) => {
-			try {
-				const menu = document.querySelector(MENU);
-				if (!menu) return;
-				if (menu.contains(event.target)) return;
-				// 只在对准菜单外时尝试关闭；交给 React 的 Esc 处理路径。
-				document.dispatchEvent(
-					new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-				);
-			} catch {
-				// 忽略，不影响页面其余交互。
-			}
-		},
-		true,
-	);
 
 	if (document.readyState === "loading") {
 		document.addEventListener("DOMContentLoaded", tick, { once: true });

@@ -2,25 +2,45 @@
 
 CSTP Next · **会话导出**增强（Web 端）。
 
-与 [WEB_OTP](../WEB_OTP)（登录相关）完全独立，可单独安装或回滚。
+与 [WEB_OTP](../WEB_OTP)（登录相关）完全独立。
 
 ## 功能
 
-在会话列表右键菜单新增「导出（CSTP Next）」：
+会话列表右键菜单新增「导出（CSTP Next）」：
 
 | 模式 | 行为 |
 | --- | --- |
 | 单选 | 导出被右键的会话 |
-| 管理模式多选 | 逐个导出全部已勾选会话 |
+| 管理模式多选 | 合并为一个 HTML 文件导出 |
 
-导出完成后自动弹出资源管理器，定位到 `artifacts\<日期>\sessions\`。
-
-菜单位置保持「危险操作在最后」的语义：
+导出走**浏览器下载**：弹出「另存为」对话框，由使用者自行选择保存位置。
 
 ```
 单选：重命名 | 管理 | 导出（CSTP Next） | ─── | 删除
 多选：              导出（CSTP Next） | 删除
 ```
+
+## 为什么不用后端内置导出
+
+后端 `POST /api/sessions/<id>/exports` 依赖 `puppeteer-core` 驱动本机 Edge/Chrome 渲染，
+存在两个实际问题：
+
+1. 管理员权限或受限环境下浏览器常启动失败（`export_browser_launch_failed`）；
+2. 导出目录固定为 `artifacts/<日期>/sessions/`，用户无法选择位置。
+
+本实现改为纯前端，绕开这两个限制。
+
+## 实现方式
+
+1. `GET /api/sessions/<id>` 读取会话快照
+2. 页面内生成自包含 HTML（样式内嵌、无外部资源）
+3. `Blob` + `<a download>` 触发浏览器下载
+
+**安全性**
+
+- 只读 GET，不写任何本地文件
+- 会话内容全部 HTML 转义，防止 `<script>` / `<img onerror>` 注入
+- 生成文件不含任何外部资源引用
 
 ## 文件
 
@@ -33,38 +53,14 @@ CSTP Next · **会话导出**增强（Web 端）。
 ## 用法
 
 ```powershell
-# 预演
-.\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot' -DryRun
-
-# 安装
-.\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot'
-
-# 回滚
-.\CSTPN-rollback-export.ps1 -Target 'C:\path\to\cst-pilot'
+.\CSTPN-apply-export.ps1    -Target 'C:\path\to\cst-pilot' -DryRun   # 预演
+.\CSTPN-apply-export.ps1    -Target 'C:\path\to\cst-pilot'           # 安装
+.\CSTPN-rollback-export.ps1 -Target 'C:\path\to\cst-pilot'           # 回滚
 ```
 
-> `CSTPN-session-export.js` 需与 `.ps1` 放在同一目录，或安装时用 `-Source` 指定。
+> `CSTPN-session-export.js` 需与 `.ps1` 放在同一目录，或用 `-Source` 指定。
 
-## 复用后端既有接口
+## 兼容性说明
 
-不新增路由、不接受任意路径：
-
-| 接口 | 用途 |
-| --- | --- |
-| `POST /api/sessions/<id>/exports` | 创建导出任务 |
-| `GET /api/exports/<exportId>` | 轮询状态 |
-| `POST /api/exports/<exportId>/open` | 启动本机文件管理器 |
-
-保存目录由后端固定在 `artifacts/<日期>/sessions/`，页面无法指定路径。
-
-导出参数：
-
-```json
-{ "format": "html", "theme": "dark", "includeThinking": false, "includeTools": false }
-```
-
-## 说明
-
-- 安装前自动备份 `index.html` 到 `<目标>\patch-backup-cstpn-exp-<时间戳>`
-- 可重复运行，已就位则跳过
-- 修改后需重启 CST Pilot，并按 `Ctrl+F5` 强刷
+脚本不手动删除任何 React 管理的 DOM 节点（早期版本调用 `menu.remove()`
+会导致 `NotFoundError: removeChild` 整页崩溃，已修复）。
