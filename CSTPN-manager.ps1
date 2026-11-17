@@ -420,7 +420,7 @@ if (Test-Path -LiteralPath $animFile) {
     try {
         . $animFile
         if (Get-Command Show-CstpnBootLogo -ErrorAction SilentlyContinue) {
-            Show-CstpnBootLogo -Blinks 3 -DelayMs 140
+            Show-CstpnBootLogo -Speed 1.0
         }
     } catch { }
 }
