@@ -87,13 +87,14 @@
 	/**
 	 * 记录 contextmenu 命中的会话行。
 	 * 用捕获阶段监听，早于 React 的 onContextMenu，不阻止原事件。
+	 *
+	 * 注意：这里只做记录，绝不动 DOM。
+	 * 菜单节点由 React 渲染与卸载，手动 remove() 会让 React 卸载时
+	 * 再删一次而抛 NotFoundError（removeChild），导致整页崩溃。
 	 */
 	function trackContextMenu(event) {
 		try {
 			const row = event.target?.closest?.(ROW);
-			for (const menu of document.querySelectorAll(MENU)) {
-				menu.remove();
-			}
 			lastRow = row || null;
 		} catch {
 			lastRow = null;
@@ -116,7 +117,6 @@
 		const activeId = active?.getAttribute("data-session-id");
 		return activeId ? [activeId] : [];
 	}
-
 	// ---------------------------------------------------------------- 导出流程
 	async function api(path, init) {
 		const response = await fetch(path, {
@@ -243,7 +243,8 @@
 			event.preventDefault();
 			event.stopPropagation();
 			const ids = targetSessionIds();
-			menu.remove();
+			// 不手动关闭菜单：菜单由 React 管理，remove() 会让 React 在卸载时
+			// 再次删除同一个节点而抛 removeChild 错误。交由 React 自身的交互关闭。
 			void runExport(ids);
 		});
 		return button;
@@ -276,6 +277,30 @@
 	window.__cstpnExport = { runExport, targetSessionIds };
 
 	document.addEventListener("contextmenu", trackContextMenu, true);
+
+	/**
+	 * 点击菜单外部时收起菜单。
+	 * 不使用 menu.remove()：节点归 React 所有，手动删除会让 React
+	 * 之后卸载同一个节点时抛 NotFoundError。
+	 * 这里只派发 Esc，复用页面自身的关闭逻辑（既有 keydown 处理）。
+	 */
+	document.addEventListener(
+		"mousedown",
+		(event) => {
+			try {
+				const menu = document.querySelector(MENU);
+				if (!menu) return;
+				if (menu.contains(event.target)) return;
+				// 只在对准菜单外时尝试关闭；交给 React 的 Esc 处理路径。
+				document.dispatchEvent(
+					new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+				);
+			} catch {
+				// 忽略，不影响页面其余交互。
+			}
+		},
+		true,
+	);
 
 	if (document.readyState === "loading") {
 		document.addEventListener("DOMContentLoaded", tick, { once: true });
