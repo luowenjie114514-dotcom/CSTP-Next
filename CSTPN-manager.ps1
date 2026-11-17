@@ -410,6 +410,17 @@ function Show-Menu([string]$Kit) {
 }
 
 # ---------------------------------------------------------------- 入口
+# 启动标识（缺失动画文件时静默跳过）
+$animFile = Join-Path $script:ScriptDir 'CSTPN-boot-anim.ps1'
+if (Test-Path -LiteralPath $animFile) {
+    try {
+        . $animFile
+        if (Get-Command Show-CstpnBootLogo -ErrorAction SilentlyContinue) {
+            Show-CstpnBootLogo -Blinks 3 -DelayMs 140
+        }
+    } catch { }
+}
+
 Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 
 $Target = Resolve-Target
