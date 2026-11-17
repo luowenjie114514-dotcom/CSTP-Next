@@ -104,8 +104,8 @@
 	function findScroller() {
 		const conv = document.querySelector(".conversation");
 		if (!conv) return null;
-		// .conversation 自身滚动，或它的父级
-		let node = conv;
+		if (conv.scrollHeight > conv.clientHeight + 4) return conv;
+		let node = conv.parentElement;
 		while (node && node !== document.body) {
 			const style = getComputedStyle(node);
 			if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 4) return node;
@@ -114,13 +114,27 @@
 		return conv;
 	}
 
-	function buildNav() {
+	/**
+	 * 找挂载点：必须是不随内容滚动的祖先。
+	 * .conversation 自身是滚动容器，把导航条挂上去会跟着内容一起滚走，
+	 * 所以改挂到 .chat-message-surface（position:relative + overflow:hidden）。
+	 */
+	function findAnchor() {
 		const scroller = findScroller();
-		if (!scroller) return;
+		if (!scroller) return null;
+		if (scroller.classList.contains("conversation")) {
+			return document.querySelector(".chat-message-surface") ?? scroller.parentElement;
+		}
+		return scroller;
+	}
+
+	function buildNav() {
+		const anchor = findAnchor();
+		if (!anchor) return;
 		const turns = [...document.querySelectorAll(".conversation > .turn")];
 		if (!turns.length) return;
 
-		const host = scroller;
+		const host = anchor;
 		if (getComputedStyle(host).position === "static") host.classList.add("cstpn-nav-host");
 
 		let nav = host.querySelector(`[${MARK}]`);
@@ -180,7 +194,8 @@
 	 *   early   —— 更早的轮次（最淡）
 	 */
 	function markCurrent(nav, turns) {
-		const scroller = nav.parentElement;
+		// 导航条挂在 anchor 上，滚动容器需要单独取（可能是 .conversation）
+		const scroller = findScroller();
 		if (!scroller) return;
 		const box = scroller.getBoundingClientRect();
 		let active = 0;

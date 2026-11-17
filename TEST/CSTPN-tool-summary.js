@@ -27,6 +27,7 @@
 		style.id = STYLE_ID;
 		style.textContent = `
 .cstpn-tools-overlay{position:fixed;inset:0;z-index:2147000000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(12,17,22,.56)}
+.cstpn-tools-overlay[hidden]{display:none}
 .cstpn-tools-card{box-sizing:border-box;width:min(640px,100%);max-height:min(78vh,760px);display:flex;flex-direction:column;border-radius:14px;border:1px solid var(--chat-border,rgba(127,127,127,.3));background:var(--chat-bg,#1c1f24);color:var(--chat-ink,#e8ecef);box-shadow:0 20px 52px rgba(0,0,0,.46);overflow:hidden}
 .cstpn-tools-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--chat-border,rgba(127,127,127,.24))}
 .cstpn-tools-title{margin:0;font-size:15px;font-weight:600}
@@ -137,9 +138,31 @@
 	// ---------------------------------------------------------------- 面板
 	let overlay = null;
 
-	function closePanel() {
+	function closePanel(event) {
+		if (event) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
 		if (overlay) overlay.hidden = true;
 	}
+
+	/**
+	 * Esc 关闭。
+	 * overlay 是普通 div，本身不可聚焦，挂在它身上的 keydown 收不到事件，
+	 * 因此改为在 document 上监听；只在面板可见时响应，并阻止事件继续传播。
+	 */
+	document.addEventListener(
+		"keydown",
+		(event) => {
+			if (event.key !== "Escape") return;
+			const el = document.querySelector('[data-cstpn-tools="overlay"]');
+			if (!el || el.hidden) return;
+			event.preventDefault();
+			event.stopPropagation();
+			el.hidden = true;
+		},
+		true,
+	);
 
 	function buildPanel() {
 		const root = document.createElement("div");
@@ -165,7 +188,14 @@
 		close.className = "cstpn-tools-close";
 		close.setAttribute("aria-label", "关闭");
 		close.textContent = "×";
-		close.addEventListener("click", closePanel);
+		// 直接在这里设置 hidden，不依赖外层函数引用。
+		// 之前绑定 closePanel 时点击无效，改为自包含处理后确认可用。
+		close.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			if (overlay) overlay.hidden = true;
+			root.hidden = true;
+		});
 		head.append(left, close);
 
 		const body = document.createElement("div");
@@ -175,10 +205,11 @@
 		root.appendChild(card);
 
 		root.addEventListener("click", (event) => {
-			if (event.target === root) closePanel();
-		});
-		root.addEventListener("keydown", (event) => {
-			if (event.key === "Escape") closePanel();
+			if (event.target === root) {
+				event.preventDefault();
+				root.hidden = true;
+				if (overlay) overlay.hidden = true;
+			}
 		});
 
 		document.body.appendChild(root);
