@@ -1,56 +1,44 @@
 # test 分支 · 待测功能
 
 > **本分支仅用于测试，内容可能不稳定。**
+> 测试通过后移入 `patch`。
 
-## 当前待测
+## 当前状态
 
-### 1. 会话列表快速搜索 `CSTPN-session-search.js`
+**无待测内容。**
 
-侧栏顶部注入搜索框，输入即按标题 / sessionID 过滤。
+前一轮的三个候选经核查后处理如下：
 
-- `Ctrl/Cmd + K` 聚焦，`Esc` 清空
-- 只改 `display`，不移动不删除节点
-- 只过滤 `.sidebar-session[data-session-id]`，
-  **不会误伤聊天区**（`.chat-loaded` 也带 `data-session-id`，早期版本踩过这个坑）
+| 功能 | 原生是否已有 | 处理 |
+| --- | --- | --- |
+| 代码块一键复制 | ✅ 已有 | 移除 |
+| 消息时间戳与耗时 | ✅ 已有 | 移除 |
+| 会话列表搜索 | ❌ 没有 | **已升入 [`patch`](../tree/patch) 的 `WEB_SRH`** |
 
-### 2. 消息时间戳与轮次耗时 `CSTPN-message-time.js`
+### 核查依据
 
-每条消息右下角浅色显示：
-
-```
-04:53
-04:53  +2.4s
-```
-
-- 时间来自 `GET /api/sessions/<id>` 的 `entries[].message.timestamp`
-- **对不齐就不显示**（元素数与时间戳数差超过 2 时跳过），宁缺勿错
-
----
-
-## 已移除
-
-### ~~代码块一键复制~~ `CSTPN-code-copy.js`
-
-**已删除。** 原生已自带该功能：
+**代码块复制** — 原生 `error-notice` 模块已提供：
 
 ```
 div.code-block
   ├─ pre.code-block-content
-  ├─ button.code-copy-button      ← 复制按钮（含 aria-label）
-  └─ output.code-copy-feedback    ← 「已复制」提示，2 秒自动复位
+  ├─ button.code-copy-button
+  └─ output.code-copy-feedback
 ```
 
-实测注入后页面上会出现两个复制按钮，属重复实现，故移除。
+**消息时间戳** — 原生在每轮对话的操作栏里已渲染：
 
----
+```js
+div.answer-actions
+  ├─ 复制回答按钮
+  ├─ 从此处分支新会话按钮
+  └─ span: toLocaleTimeString("zh-CN", {hour:"2-digit", minute:"2-digit"})
+```
 
-## 实测验证（真实 Edge 157 headless）
+耗时同样已有：`firstProcessLabel` 会显示「工作中 / 已完成 / 已工作 1m23s」。
 
-| 功能 | 结果 |
-| --- | --- |
-| 会话搜索 | 过滤精确 ✓ 聊天区不受影响 ✓ 清空恢复 ✓ |
-| 消息时间 | 显示正确，间隔 `+2.4s` ✓ |
-| 控制台错误 | 无 |
+**会话列表搜索** — 原生搜索只有设置页（`.settings-search`）
+与分支树（`.tree-search`），侧栏没有。
 
 ---
 
