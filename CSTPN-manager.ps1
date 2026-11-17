@@ -69,7 +69,62 @@ function Test-Kit([string]$Path) {
 }
 
 # ---------------------------------------------------------------- 远程清单
+function Parse-Catalog([string]$md) {
+    if (-not $md) { $script:SyncInfo = '远程不可用，用内置'; return }
+    try {
+        $items = @()
+        $conflicts = @{}
+        $cBlock = [regex]::Match($md, '(?s)```conflicts\r?\n(.*?)```')
+        if ($cBlock.Success) {
+            foreach ($line in ($cBlock.Groups[1].Value -split "`r?`n")) {
+                if ($line -match '^\s*(\S+)\s*\|\s*(\S+)\s*$') {
+                    $a = $Matches[1]; $b = $Matches[2]
+                    if (-not $conflicts.ContainsKey($a)) { $conflicts[$a] = @() }
+                    if (-not $conflicts.ContainsKey($b)) { $conflicts[$b] = @() }
+                    $conflicts[$a] += $b
+                    $conflicts[$b] += $a
+                }
+            }
+        }
+        $block = [regex]::Match($md, '(?s)```catalog\r?\n(.*?)```')
+        if ($block.Success) {
+            foreach ($line in ($block.Groups[1].Value -split "`r?`n")) {
+                if (-not $line.Trim()) { continue }
+                $p = $line -split '\s*\|\s*'
+                if ($p.Count -lt 6) { continue }
+                $id = $p[0].Trim()
+                $applyVal = ''
+                if ($p[2].Trim() -ne '-') { $applyVal = $p[2].Trim() }
+                $rollbackVal = ''
+                if ($p[3].Trim() -ne '-') { $rollbackVal = $p[3].Trim() }
+                $markerVal = ''
+                if ($p[4].Trim() -ne '-') { $markerVal = $p[4].Trim() }
+                $conflictVal = @()
+                if ($conflicts.ContainsKey($id)) { $conflictVal = $conflicts[$id] }
+                $items += @{
+                    Id = $id
+                    Branch = $p[1].Trim()
+                    Apply = $applyVal
+                    Rollback = $rollbackVal
+                    Marker = $markerVal
+                    Name = $p[5].Trim()
+                    Conflicts = $conflictVal
+                }
+            }
+        }
+        if ($items.Count -gt 0) {
+            $script:Catalog = $items
+            $script:SyncInfo = "已同步（$($items.Count) 项）"
+        } else {
+            $script:SyncInfo = '清单格式异常，用内置'
+        }
+    } catch {
+        $script:SyncInfo = '解析失败，用内置'
+    }
+}
+
 function Sync-Catalog {
+
     if ($NoSync) { $script:SyncInfo = '已跳过'; return }
     $md = $null
 
@@ -92,6 +147,7 @@ function Sync-Catalog {
 
     if (-not $md) { $script:SyncInfo = '远程不可用，用内置'; return }
 
+    if ($md) { Parse-Catalog $md; return }
     try {
         $items = @()
         $conflicts = @{}
@@ -414,18 +470,71 @@ function Show-Menu([string]$Kit) {
 }
 
 # ---------------------------------------------------------------- 入口
-# 启动标识（缺失动画文件时静默跳过）
+# ---------------------------------------------------------------- 后台清单同步
+# 动画播放期间并行拉取 CATALOG.md，结束后沿用本次结果（不再重复请求）
+$script:SyncJob = $null
+
+if (-not $NoSync) {
+    $targetForJob = $Target
+    $repoForJob = $script:Repo
+    $tokenForJob = $script:Token
+    $script:SyncJob = Start-Job -ScriptBlock {
+        param($repo, $token)
+        $md = $null
+        try {
+            $headers = @{ Accept = 'application/vnd.github.raw'; 'User-Agent' = 'cstpn-manager' }
+            if ($token) { $headers['Authorization'] = "Bearer $token" }
+            $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/$repo/contents/CATALOG.md?ref=main" -Headers $headers -UseBasicParsing -TimeoutSec 15
+            $md = $resp.Content
+            if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
+        } catch { }
+        if (-not $md) {
+            try {
+                $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$repo/main/CATALOG.md" -UseBasicParsing -TimeoutSec 15).Content
+                if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
+            } catch { }
+        }
+        return $md
+    } -ArgumentList $repoForJob, $tokenForJob
+}
+
+# ---------------------------------------------------------------- 启动标识
 $animFile = Join-Path $script:ScriptDir 'CSTPN-boot-anim.ps1'
+$script:AnimLoaded = $false
 if (Test-Path -LiteralPath $animFile) {
     try {
         . $animFile
         if (Get-Command Show-CstpnBootLogo -ErrorAction SilentlyContinue) {
+            $script:AnimLoaded = $true
             Show-CstpnBootLogo -Speed 1.0
         }
     } catch { }
 }
 
 Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
+
+# ---------------------------------------------------------------- 接收后台清单
+if ($script:SyncJob) {
+    try {
+        Write-Host -NoNewline "同步清单… "
+        $null = Wait-Job -Job $script:SyncJob -Timeout 20
+        $md = Receive-Job -Job $script:SyncJob -ErrorAction SilentlyContinue
+        if ($md) {
+            $script:PendingCatalogMd = $md
+            $script:SyncInfo = '已获取'
+        } else {
+            $script:SyncInfo = '远程不可用，用内置'
+        }
+    } catch {
+        $script:SyncInfo = '同步失败，用内置'
+    } finally {
+        Remove-Job -Job $script:SyncJob -Force -ErrorAction SilentlyContinue
+        $script:SyncJob = $null
+    }
+    Write-Host $script:SyncInfo -ForegroundColor Gray
+} else {
+    $script:SyncInfo = if ($NoSync) { '已跳过' } else { '未同步' }
+}
 
 $Target = Resolve-Target
 if (-not (Test-Kit $Target)) {
@@ -439,8 +548,12 @@ Write-Host "目标   $Target"
 if (-not (Test-Path $script:CacheDir)) { New-Item -ItemType Directory -Path $script:CacheDir -Force | Out-Null }
 Write-Host "缓存   $script:CacheDir"
 
-Write-Host -NoNewline "同步清单… "
-Sync-Catalog
-Write-Host $script:SyncInfo -ForegroundColor Gray
+# 用后台取到的 Markdown 解析清单（避免二次请求）
+if ($script:PendingCatalogMd) {
+    Parse-Catalog $script:PendingCatalogMd
+    $script:PendingCatalogMd = $null
+} elseif (-not $NoSync) {
+    Sync-Catalog
+}
 
 if ($NonInteractive) { Show-Status $Target } else { Show-Menu $Target }

@@ -1,14 +1,15 @@
 ﻿<#
     CSTPN 补丁管理器 · 启动动画
 
-    配色取自 ascii-banner.oaix.tech 的 Sunset 主题：
-      渐变 #FB7185 (rose) -> #F59E0B (amber)
-    自下而上按行插值，模拟日出。
+    配色算法照搬 ascii-banner.oaix.tech：
+      - Sunset 渐变 [#FB7185, #F59E0B]
+      - 按「字符所在列」插值（横向渐变），非按行
+      - 使用 ANSI 24 位真彩色 ESC[38;2;r;g;bm
 
     序列：
       1. 本体 CST-PILOT 滚入
-      2. Sunset 色遮罩自下而上掩蔽
-      3. 推入 Next（Sunset 字形）
+      2. Sunset 遮罩自下而上掩蔽
+      3. 推入 Next
 #>
 
 # ---------------------------------------------------------------- 字形
@@ -36,39 +37,69 @@ $script:ArtNext = @(
     '    ""        `"`          "YP''                                '
 )
 
-# ---------------------------------------------------------------- Sunset 配色
-# 源站和渐变：#FB7185 (rose) -> #F59E0B (amber)
-$script:SunsetFrom = @(0xFB, 0x71, 0x85)   # #FB7185
-$script:SunsetTo   = @(0xF5, 0x9E, 0x0B)   # #F59E0B
-
-# 预生成 12 档 RGB（自下而上：底部 rose，顶部 amber）
-$script:SunsetRamp = @()
-for ($i = 0; $i -lt 12; $i++) {
-    $t = $i / 11.0
-    $r = [int]($script:SunsetFrom[0] + ($script:SunsetTo[0] - $script:SunsetFrom[0]) * $t)
-    $g = [int]($script:SunsetFrom[1] + ($script:SunsetTo[1] - $script:SunsetFrom[1]) * $t)
-    $b = [int]($script:SunsetFrom[2] + ($script:SunsetTo[2] - $script:SunsetFrom[2]) * $t)
-    $script:SunsetRamp += , @($r, $g, $b)
-}
-
-# ConsoleColor 只能 16 色，预映射到最接近的可用色
-$script:ConsoleRamp = @(
-    [ConsoleColor]::Magenta       # #FB7185 玫瑰红 -> 品红
-    [ConsoleColor]::Magenta
-    [ConsoleColor]::Red
-    [ConsoleColor]::Red
-    [ConsoleColor]::DarkYellow
-    [ConsoleColor]::DarkYellow
-    [ConsoleColor]::Yellow
-    [ConsoleColor]::Yellow
-    [ConsoleColor]::Yellow
-    [ConsoleColor]::Yellow
-    [ConsoleColor]::Yellow
-    [ConsoleColor]::Yellow
+# ---------------------------------------------------------------- Sunset 渐变
+# 照搬源站：sunset: ['#FB7185', '#F59E0B']，按列线性插值
+$script:SunsetStops = @(
+    @{ r = 0xFB; g = 0x71; b = 0x85 }   # #FB7185 rose
+    @{ r = 0xF5; g = 0x9E; b = 0x0B }   # #F59E0B amber
 )
 
-$script:MaskColor = [ConsoleColor]::DarkMagenta
-$script:MaskChar = '▓'
+$script:UseTrueColor = $true
+$script:MaskColorSeq = "`e[38;2;120;40;160m"   # 遮罩用深紫
+
+# 在渐变上取色：$t = 0..1
+function Get-GradientRgb([double]$t) {
+    if ($t -lt 0) { $t = 0 }
+    if ($t -gt 1) { $t = 1 }
+
+    $r0 = 0xFB; $g0 = 0x71; $b0 = 0x85   # #FB7185
+    $r1 = 0xF5; $g1 = 0x9E; $b1 = 0x0B   # #F59E0B
+
+    $rr = [int][Math]::Round($r0 + ($r1 - $r0) * $t)
+    $gg = [int][Math]::Round($g0 + ($g1 - $g0) * $t)
+    $bb = [int][Math]::Round($b0 + ($b1 - $b0) * $t)
+
+    return [pscustomobject]@{ r = $rr; g = $gg; b = $bb }
+}
+
+function Format-TrueColor($rgb) {
+    return "`e[38;2;$($rgb.r);$($rgb.g);$($rgb.b)m"
+}
+
+$script:Reset = "`e[0m"
+
+# 给一行按列上色（照搬源站 Ae 函数逻辑）
+function Get-UniformWidth {
+    if ($script:CachedWidth) { return $script:CachedWidth }
+    $w = 1
+    foreach ($l in $script:ArtCstpilot) { if ($l.Length -gt $w) { $w = $l.Length } }
+    foreach ($l in $script:ArtNext) { if ($l.Length -gt $w) { $w = $l.Length } }
+    $script:CachedWidth = $w
+    return $w
+}
+
+function Format-ColorLine([string]$Line, [int]$Width = 0) {
+    if (-not $Line) { return '' }
+    if (-not $script:UseTrueColor) { return $Line }
+
+    # 统一按最长行宽度插值（照搬源站 a = Math.max(...) 的做法）
+    if ($Width -le 0) { $Width = Get-UniformWidth }
+
+    $chars = $Line.ToCharArray()
+    $n = $chars.Count
+    $sb = New-Object System.Text.StringBuilder
+    $lastSeq = ''
+    for ($i = 0; $i -lt $n; $i++) {
+        $ch = $chars[$i]
+        if ($ch -eq ' ') { [void]$sb.Append($ch); continue }
+        $t = if ($Width -le 1) { 0 } else { $i / ($Width - 1) }
+        $seq = Format-TrueColor (Get-GradientRgb $t)
+        if ($seq -ne $lastSeq) { [void]$sb.Append($seq); $lastSeq = $seq }
+        [void]$sb.Append($ch)
+    }
+    if ($lastSeq) { [void]$sb.Append($script:Reset) }
+    return $sb.ToString()
+}
 
 function Get-ArtWidth {
     $w = 1
@@ -77,42 +108,42 @@ function Get-ArtWidth {
     return $w
 }
 
-# 按行取 Sunset 色：$row=0 是顶部（amber），越往下越接近 rose
-function Get-SunsetColor([int]$row, [int]$total) {
-    if ($total -le 1) { return $script:ConsoleRamp[0] }
-    $ratio = $row / ($total - 1)
-    $idx = [int]([Math]::Round($ratio * ($script:ConsoleRamp.Count - 1)))
-    $idx = [Math]::Max(0, [Math]::Min($script:ConsoleRamp.Count - 1, $idx))
-    return $script:ConsoleRamp[$idx]
-}
-
 function Write-Frame {
-    param([string[]]$Lines, [ConsoleColor[]]$Colors)
+    param([string[]]$Lines, [string[]]$Overrides = @())
     Clear-Host
     for ($i = 0; $i -lt $Lines.Count; $i++) {
-        if (-not $Lines[$i]) { Write-Host ''; continue }
-        $c = [ConsoleColor]::White
-        if ($i -lt $Colors.Count) { $c = $Colors[$i] }
-        Write-Host $Lines[$i] -ForegroundColor $c
+        $line = $Lines[$i]
+        if (-not $line) { Write-Host ''; continue }
+        # 遮罩行用固定色
+        if ($i -lt $Overrides.Count -and $Overrides[$i]) {
+            Write-Host ($Overrides[$i] + $line + $script:Reset)
+        } else {
+            Write-Host (Format-ColorLine $line)
+        }
     }
 }
 
 <#
 .SYNOPSIS
-    播放完整启动动画。
+    播放启动动画。
 .PARAMETER Speed
-    帧间隔倍率，1 = 默认，2 = 慢一倍。
+    帧间隔倍率，1 = 默认。
 .PARAMETER Skip
     跳过动画直接显示 Next。
 .PARAMETER NoClear
     不清屏。
+.PARAMETER NoColor
+    关闭真彩色（老终端兼容）。
 #>
 function Show-CstpnBootLogo {
     param(
         [double]$Speed = 1.0,
         [switch]$Skip,
-        [switch]$NoClear
+        [switch]$NoClear,
+        [switch]$NoColor
     )
+
+    if ($NoColor) { $script:UseTrueColor = $false }
 
     $cstpilot = $script:ArtCstpilot
     $next = $script:ArtNext
@@ -121,9 +152,7 @@ function Show-CstpnBootLogo {
 
     if ($Skip) {
         if (-not $NoClear) { Clear-Host }
-        for ($i = 0; $i -lt $next.Count; $i++) {
-            Write-Host $next[$i] -ForegroundColor (Get-SunsetColor $i $next.Count)
-        }
+        foreach ($line in $next) { Write-Host (Format-ColorLine $line) }
         Write-Host ''
         return
     }
@@ -131,35 +160,29 @@ function Show-CstpnBootLogo {
     # ---- 第 1 幕：本体滚入 ----
     for ($i = 1; $i -le $h; $i++) {
         $frame = @()
-        $colors = @()
         for ($r = 0; $r -lt $h; $r++) {
-            if ($r -lt $i) {
-                $frame += $cstpilot[$r]
-                $colors += (Get-SunsetColor $r $h)
-            } else {
-                $frame += ''
-            }
+            $frame += $(if ($r -lt $i) { $cstpilot[$r] } else { '' })
         }
-        Write-Frame -Lines $frame -Colors $colors
+        Write-Frame -Lines $frame
         Start-Sleep -Milliseconds ([int](140 * $Speed))
     }
     Start-Sleep -Milliseconds ([int](500 * $Speed))
 
-    # ---- 第 2 幕：Sunset 遮罩自下而上 ----
+    # ---- 第 2 幕：遮罩自下而上 ----
     for ($level = 1; $level -le $h; $level++) {
         $frame = @()
-        $colors = @()
+        $maskFlags = @()
         for ($r = 0; $r -lt $h; $r++) {
             $fromBottom = $h - $r
             if ($fromBottom -le $level) {
-                $frame += ($script:MaskChar * $cstpilot[$r].Length)
-                $colors += $script:MaskColor
+                $frame += ('▓' * $cstpilot[$r].Length)
+                $maskFlags += $script:MaskColorSeq
             } else {
                 $frame += $cstpilot[$r]
-                $colors += (Get-SunsetColor $r $h)
+                $maskFlags += ''
             }
         }
-        Write-Frame -Lines $frame -Colors $colors
+        Write-Frame -Lines $frame -Overrides $maskFlags
         Start-Sleep -Milliseconds ([int](120 * $Speed))
     }
     Start-Sleep -Milliseconds ([int](220 * $Speed))
@@ -168,26 +191,22 @@ function Show-CstpnBootLogo {
     $nextH = $next.Count
     for ($level = 1; $level -le $nextH; $level++) {
         $frame = @()
-        $colors = @()
+        $maskFlags = @()
         $maskCount = $h - $level
         if ($maskCount -lt 0) { $maskCount = 0 }
         for ($p = 0; $p -lt $maskCount; $p++) {
-            $frame += ($script:MaskChar * $width)
-            $colors += $script:MaskColor
+            $frame += ('▓' * $width)
+            $maskFlags += $script:MaskColorSeq
         }
         for ($k = $nextH - $level; $k -lt $nextH; $k++) {
             if ($k -lt 0) { continue }
             $frame += $next[$k]
-            $colors += (Get-SunsetColor $k $nextH)
+            $maskFlags += ''
         }
-        Write-Frame -Lines $frame -Colors $colors
+        Write-Frame -Lines $frame -Overrides $maskFlags
         Start-Sleep -Milliseconds ([int](90 * $Speed))
     }
 
-    # 收尾
-    Start-Sleep -Milliseconds ([int](300 * $Speed))
-    for ($i = 0; $i -lt $nextH; $i++) {
-        Write-Host $next[$i] -ForegroundColor (Get-SunsetColor $i $nextH)
-    }
+    # 最后一帧已是完整 Next，只补空行（不再重复打印）
     Write-Host ''
 }
