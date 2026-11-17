@@ -1,9 +1,9 @@
 @echo off
-rem CSTPN: 补丁管理器
-rem 启动时自动从 GitHub 同步清单；找不到 cst-pilot 会弹目录选择框。
-rem 用法：CSTPN-manager.cmd              交互式
-rem       CSTPN-manager.cmd -NoSync      跳过远程同步
-rem       CSTPN-manager.cmd -Target D:\kits\cst-pilot
+rem CSTPN: Patch Manager
+rem Usage: CSTPN-manager.cmd            run with defaults
+rem        CSTPN-manager.cmd -DryRun    dry run, no file writes
+rem        CSTPN-manager.cmd -Target D:\kits\cst-pilot
+rem Note: reads catalog from GitHub; prompts for folder if cst-pilot not found
 setlocal
 chcp 65001 >nul
 where pwsh >nul 2>nul
