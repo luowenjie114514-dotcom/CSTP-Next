@@ -23,18 +23,20 @@ WEB_ID | patch | WEB_ID/CSTPN-apply-idimp.ps1 | WEB_ID/CSTPN-rollback-idimp.ps1 
 WEB_INP | patch | WEB_INP/CSTPN-apply-idimp.ps1 | WEB_INP/CSTPN-rollback-idimp.ps1 | CSTPN-session-import.js | 导入·半自动
 WEB_INP_ADD | add | - | - | - | 导入·全自动（需手工合并 api.ts，前端复用 WEB_INP）
 WEB_OTP | patch | WEB_OTP/CSTPN-apply-otp.ps1 | WEB_OTP/CSTPN-rollback-otp.ps1 | CSTPN-cstoa-open-auth.js | 动态码登录入口
-WEB_SRH | patch | WEB_SRH/CSTPN-apply-srh.ps1 | WEB_SRH/CSTPN-rollback-srh.ps1 | CSTPN-session-search.js | 会话列表搜索
+WEB_SRH | patch | WEB_SRH/CSTPN-apply-srh.ps1 | WEB_SRH/CSTPN-rollback-srh.ps1 | CSTPN-session-search.js | 会话列表搜索（侧栏，按标题/ID 过滤）
 TOOL-SUM | test | - | - | CSTPN-tool-summary.js | 工具调用摘要面板
 TURN-NAV | test | - | - | CSTPN-turn-nav.js | 轮次导航条
-SESSION-PLUS | test | - | - | CSTPN-session-plus.js | 置顶/行内重命名/会话内搜索
+SESSION-PLUS | test | - | - | CSTPN-session-plus.js | 置顶/行内重命名/会话内搜索（正文高亮）
 ```
 
 ## 冲突
 
 ```conflicts
 WEB_INP | WEB_INP_ADD
-WEB_SRH | SESSION-PLUS
 ```
+
+> 注：`WEB_SRH`（侧栏会话列表搜索）与 `SESSION-PLUS`（会话内正文搜索）
+> 作用范围不同、功能互补，**不互斥**，可同时启用。
 
 ## 文件位置
 
