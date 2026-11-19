@@ -301,7 +301,7 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 
 		const title = document.createElement("h3");
 		title.className = "cstpn-tagdlg-title";
-		title.textContent = "标签（CSTP Next）";
+		title.textContent = "标签（Next）";
 
 		const sub = document.createElement("p");
 		sub.className = "cstpn-tagdlg-sub";
@@ -525,14 +525,14 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 			const set = pinned();
 			const isPinned = set.has(single);
 			items.push(
-				buildItem(isPinned ? "取消置顶（CSTP Next）" : "置顶会话（CSTP Next）",
+				buildItem(isPinned ? "取消置顶（Next）" : "置顶会话（Next）",
 					isPinned ? ["M17 3l4 4-4 4M21 7H9M7 21l-4-4 4-4M3 17h12"] : ["M16 3a2 2 0 0 1 2 2v5.3l1.4 2.8a1 1 0 0 1-.9 1.4H13v6a1 1 0 0 1-2 0v-6H5.5a1 1 0 0 1-.9-1.4L6 10.3V5a2 2 0 0 1 2-2h8Z"],
 					() => { togglePin(single); }),
 			);
 
 			// 标签（仅单会话）
 			items.push(
-				buildItem("设置标签（CSTP Next）",
+				buildItem("设置标签（Next）",
 					["M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82ZM7 7h.01"],
 					() => {
 						const row = lastRow || document.querySelector(`${ROW}[aria-current="page"]`);
@@ -542,6 +542,7 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 		}
 
 		// 插到「删除」之前——危险操作保持最后
+		// 分隔线已由其他补丁提供时不再重复创建
 		if (items.length) {
 			const allItems = [...menu.querySelectorAll(ITEM)];
 			const deleteItem = allItems.find((el) => {
@@ -550,10 +551,13 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 			});
 
 			const frag = document.createDocumentFragment();
-			const hr = document.createElement("hr");
-			hr.className = "session-menu-divider";
-			hr.setAttribute("data-cstpn-menu", "divider");
-			frag.appendChild(hr);
+			const hasDivider = !!menu.querySelector(".session-menu-divider");
+			if (!hasDivider) {
+				const hr = document.createElement("hr");
+				hr.className = "session-menu-divider";
+				hr.setAttribute("data-cstpn-menu", "divider");
+				frag.appendChild(hr);
+			}
 
 			for (const item of items) {
 				item.setAttribute("data-cstpn-menu", "");
@@ -561,7 +565,6 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 			}
 
 			if (deleteItem?.parentElement) {
-				// 原生菜单可能把「删除」包在分隔线后，插到它前面
 				deleteItem.parentElement.insertBefore(frag, deleteItem);
 			} else {
 				menu.appendChild(frag);
@@ -662,7 +665,7 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 		findbar.className = "cstpn-findbar";
 
 		const input = document.createElement("input");
-		input.placeholder = "在会话中搜索（CSTP Next）…";
+		input.placeholder = "在会话中搜索（Next）…";
 		input.setAttribute("aria-label", "会话内搜索");
 
 		const cnt = document.createElement("span");
