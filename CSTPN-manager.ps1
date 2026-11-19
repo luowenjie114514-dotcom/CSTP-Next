@@ -401,13 +401,13 @@ function Enable-Patch([string]$Kit, $item) {
     foreach ($cid in $item.Conflicts) {
         $other = $script:Catalog | Where-Object { $_.Id -eq $cid } | Select-Object -First 1
         if ($other -and (Get-State $Kit $other)) {
-            Write-Host "  ↳ 冲突：$($other.Id) 已启用，先卸载…" -ForegroundColor Yellow
+            Write-Host "  ↳ 检测到互斥补丁 $($other.Id)，自动卸载后再安装…" -ForegroundColor Yellow
             Disable-Patch $Kit $other
         }
     }
 
     if ($item.Id -eq 'WEB_INP_ADD') {
-        Write-Host "  全自动导入的前端部分复用 WEB_INP，先装它…" -ForegroundColor Yellow
+        Write-Host "  WEB_INP_ADD 复用 WEB_INP 的前端，先安装 WEB_INP…" -ForegroundColor Yellow
         $fe = $script:Catalog | Where-Object { $_.Id -eq 'WEB_INP' } | Select-Object -First 1
         Enable-Patch $Kit $fe
         Write-Host ""
@@ -448,8 +448,18 @@ function Show-Menu([string]$Kit) {
     while ($true) {
         Show-Status $Kit
         Write-Host ""
-        Write-Host "  输入补丁 ID 启用；ID 前加 - 回滚；r 重新同步清单；q 退出。" -ForegroundColor Gray
-        $choice = (Read-Host "  > ").Trim()
+        Write-Host "  ── 操作说明 ──────────────────────────────────" -ForegroundColor DarkGray
+        Write-Host "  安装补丁    直接输入补丁 ID" -ForegroundColor Gray
+        Write-Host "              例：WEB_SRH" -ForegroundColor DarkGray
+        Write-Host "  卸载补丁    ID 前加减号" -ForegroundColor Gray
+        Write-Host "              例：-WEB_SRH" -ForegroundColor DarkGray
+        Write-Host "  重新同步清单  r" -ForegroundColor Gray
+        Write-Host "  退出          q" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  冲突自动换装：安装 WEB_INP_ADD 时若已装 WEB_INP，" -ForegroundColor Yellow
+        Write-Host "              会先自动卸载 WEB_INP（两者只能二选一）" -ForegroundColor Yellow
+        Write-Host "" 
+        $choice = (Read-Host "  输入 > ").Trim()
         if (-not $choice) { continue }
         if ($choice -eq 'q') { break }
         if ($choice -eq 'r') { $script:NoSync = $false; Sync-Catalog; continue }
