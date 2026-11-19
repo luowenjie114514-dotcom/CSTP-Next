@@ -247,23 +247,37 @@
 			const set = pinned();
 			const isPinned = set.has(single);
 			items.push(
-				buildItem(isPinned ? "取消置顶" : "置顶会话",
+				buildItem(isPinned ? "取消置顶（CSTP Next）" : "置顶会话（CSTP Next）",
 					isPinned ? ["M17 3l4 4-4 4M21 7H9M7 21l-4-4 4-4M3 17h12"] : ["M16 3a2 2 0 0 1 2 2v5.3l1.4 2.8a1 1 0 0 1-.9 1.4H13v6a1 1 0 0 1-2 0v-6H5.5a1 1 0 0 1-.9-1.4L6 10.3V5a2 2 0 0 1 2-2h8Z"],
 					() => { togglePin(single); }),
 			);
 		}
 
-		// 批量分隔
+		// 插到「删除」之前——危险操作保持最后
 		if (items.length) {
+			const allItems = [...menu.querySelectorAll(ITEM)];
+			const deleteItem = allItems.find((el) => {
+				const t = el.textContent?.trim() || "";
+				return t === "删除" || t.includes("删除");
+			});
+
+			const frag = document.createDocumentFragment();
 			const hr = document.createElement("hr");
 			hr.className = "session-menu-divider";
 			hr.setAttribute("data-cstpn-menu", "divider");
-			menu.appendChild(hr);
-		}
+			frag.appendChild(hr);
 
-		for (const item of items) {
-			item.setAttribute("data-cstpn-menu", "");
-			menu.appendChild(item);
+			for (const item of items) {
+				item.setAttribute("data-cstpn-menu", "");
+				frag.appendChild(item);
+			}
+
+			if (deleteItem?.parentElement) {
+				// 原生菜单可能把「删除」包在分隔线后，插到它前面
+				deleteItem.parentElement.insertBefore(frag, deleteItem);
+			} else {
+				menu.appendChild(frag);
+			}
 		}
 
 		// 「重命名」改为行内编辑（接管原生菜单项）
@@ -493,10 +507,16 @@
 	// ================================================================ 双击重命名
 	document.addEventListener("dblclick", (event) => {
 		try {
-			const row = event.target?.closest?.(ROW);
-			if (!row || row.classList.contains("sidebar-session-select")) return; // 管理态跳过
-			const inManage = !!document.querySelector(".session-management-toolbar");
-			if (inManage) return;
+			// 只在双击会话名区域时触发（行内文字），不是整行任意位置
+			const textEl = event.target?.closest?.(".sidebar-selection-text");
+			const row = textEl?.closest?.(ROW) || event.target?.closest?.(ROW);
+			if (!row) return;
+			if (row.classList.contains("sidebar-session-select")) return; // 管理态跳过
+			if (document.querySelector(".session-management-toolbar")) return;
+
+			// 若已有编辑框在，忽略
+			if (row.querySelector(".cstpn-rename")) return;
+
 			event.preventDefault();
 			event.stopPropagation();
 			void renameInline(row);
