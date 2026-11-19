@@ -178,7 +178,7 @@
 		const left = document.createElement("div");
 		const title = document.createElement("h2");
 		title.className = "cstpn-tools-title";
-		title.textContent = "工具调用";
+		title.textContent = "工具调用（CSTP Next）";
 		const sub = document.createElement("p");
 		sub.className = "cstpn-tools-sub";
 		sub.textContent = "按轮次展示本会话的工具调度";
@@ -312,7 +312,7 @@
 			svg.appendChild(p);
 		}
 		button.appendChild(svg);
-		button.appendChild(document.createTextNode("工具调用"));
+		button.appendChild(document.createTextNode("工具调用（CSTP Next）"));
 
 		button.addEventListener("click", (event) => {
 			event.preventDefault();

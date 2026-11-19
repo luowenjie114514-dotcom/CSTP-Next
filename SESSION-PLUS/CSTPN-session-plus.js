@@ -360,7 +360,7 @@
 		findbar.className = "cstpn-findbar";
 
 		const input = document.createElement("input");
-		input.placeholder = "在会话中搜索…";
+		input.placeholder = "在会话中搜索（CSTP Next）…";
 		input.setAttribute("aria-label", "会话内搜索");
 
 		const cnt = document.createElement("span");
