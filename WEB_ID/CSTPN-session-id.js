@@ -200,7 +200,7 @@
 		button.className = "sidebar-account-item";
 		button.setAttribute(MARK, "");
 		button.appendChild(icon());
-		button.appendChild(document.createTextNode("复制会话 ID"));
+		button.appendChild(document.createTextNode("复制会话 ID（CSTP Next）"));
 		button.addEventListener("click", async (event) => {
 			event.preventDefault();
 			event.stopPropagation();

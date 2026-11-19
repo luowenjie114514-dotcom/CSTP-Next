@@ -104,7 +104,7 @@
 
 		const input = document.createElement("input");
 		input.type = "search";
-		input.placeholder = "搜索会话…";
+		input.placeholder = "搜索会话（CSTP Next）…";
 		input.value = query;
 		input.setAttribute("aria-label", "搜索会话");
 
