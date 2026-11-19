@@ -556,7 +556,7 @@ ${blocks}
 
 		const title = document.createElement("h3");
 		title.className = "cstpn-batch-title";
-		title.textContent = `批量导出（CSTP Next）· ${ids.length} 个会话`;
+		title.textContent = `批量导出（Next）· ${ids.length} 个会话`;
 
 		const sub = document.createElement("p");
 		sub.className = "cstpn-batch-sub";
@@ -652,7 +652,7 @@ ${blocks}
 		button.className = "sidebar-account-item";
 		button.setAttribute(MARK, "");
 		button.appendChild(icon());
-		button.appendChild(document.createTextNode("导出（CSTP Next）"));
+		button.appendChild(document.createTextNode("导出（Next）"));
 		button.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -790,7 +790,7 @@ ${blocks}
 		if (h1 && !h1.querySelector(`.${MARK}-badge`)) {
 			const badge = document.createElement("span");
 			badge.className = `${MARK}-badge`;
-			badge.textContent = "（CSTP Next）";
+			badge.textContent = "（Next）";
 			h1.appendChild(badge);
 		}
 

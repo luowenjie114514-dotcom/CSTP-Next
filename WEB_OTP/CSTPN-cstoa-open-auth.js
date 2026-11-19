@@ -75,7 +75,7 @@
 		open.setAttribute("href", url);
 		open.setAttribute("target", "_blank");
 		open.setAttribute("rel", "noopener noreferrer");
-		open.textContent = "使用动态码登录（CSTP Next）";
+		open.textContent = "使用动态码登录（Next）";
 
 		const note = document.createElement("p");
 		note.className = `${MARK}-note`;

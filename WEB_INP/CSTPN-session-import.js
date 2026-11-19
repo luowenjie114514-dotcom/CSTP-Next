@@ -195,12 +195,12 @@
 
 		const title = document.createElement("h3");
 		title.className = "cstpn-imp-title";
-		title.textContent = "导入会话记录（CSTP Next）";
+		title.textContent = "导入会话记录（Next）";
 
 		const desc = document.createElement("p");
 		desc.className = "cstpn-imp-desc";
 		desc.textContent =
-			"选择「导出（CSTP Next）」生成的 .json 文件，浏览器内转换为 Pi 会话文件并下载，随后把它拖进下方目录即可继续对话。全程不写本地文件。";
+			"选择「导出（Next）」生成的 .json 文件，浏览器内转换为 Pi 会话文件并下载，随后把它拖进下方目录即可继续对话。全程不写本地文件。";
 
 		const row = document.createElement("div");
 		row.className = "cstpn-imp-row";

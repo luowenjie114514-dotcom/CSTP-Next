@@ -200,7 +200,7 @@
 		button.className = "sidebar-account-item";
 		button.setAttribute(MARK, "");
 		button.appendChild(icon());
-		button.appendChild(document.createTextNode("复制会话 ID（CSTP Next）"));
+		button.appendChild(document.createTextNode("复制会话 ID（Next）"));
 		button.addEventListener("click", async (event) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -223,7 +223,7 @@
 		const item = buildItem();
 		// 放在分隔线之前（重命名/管理之后），保持「危险操作在最后」的语义
 		const divider = menu.querySelector(".session-menu-divider");
-		if (divider) menu.insertBefore(item, divider);
+		if (divider) menu.insertBefore(item, divider); // 复用已有分隔线
 		else {
 			const del = menu.querySelector(`${ITEM}.sidebar-menu-delete`);
 			if (del) menu.insertBefore(item, del);
