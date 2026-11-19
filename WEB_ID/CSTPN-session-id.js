@@ -222,11 +222,13 @@
 		injectStyle();
 		const item = buildItem();
 		// 放在分隔线之前（重命名/管理之后），保持「危险操作在最后」的语义
+		// 分隔线下方只留危险操作；补丁项一律插到它之前
 		const divider = menu.querySelector(".session-menu-divider");
-		if (divider) menu.insertBefore(item, divider); // 复用已有分隔线
-		else {
+		if (divider?.parentElement) {
+			divider.parentElement.insertBefore(item, divider);
+		} else {
 			const del = menu.querySelector(`${ITEM}.sidebar-menu-delete`);
-			if (del) menu.insertBefore(item, del);
+			if (del?.parentElement) del.parentElement.insertBefore(item, del);
 			else menu.appendChild(item);
 		}
 	}
