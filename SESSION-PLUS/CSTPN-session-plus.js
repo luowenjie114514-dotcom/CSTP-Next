@@ -541,32 +541,20 @@ const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全
 			);
 		}
 
-		// 插到「删除」之前——危险操作保持最后
-		// 分隔线已由其他补丁提供时不再重复创建
+		// 分隔线的唯一用途是把「删除」这类危险操作隔开。
+		// 所有补丁项一律插到分隔线【之前】，绝不越过它。
 		if (items.length) {
-			const allItems = [...menu.querySelectorAll(ITEM)];
-			const deleteItem = allItems.find((el) => {
-				const t = el.textContent?.trim() || "";
-				return t === "删除" || t.includes("删除");
-			});
-
 			const frag = document.createDocumentFragment();
-			const hasDivider = !!menu.querySelector(".session-menu-divider");
-			if (!hasDivider) {
-				const hr = document.createElement("hr");
-				hr.className = "session-menu-divider";
-				hr.setAttribute("data-cstpn-menu", "divider");
-				frag.appendChild(hr);
-			}
-
 			for (const item of items) {
 				item.setAttribute("data-cstpn-menu", "");
 				frag.appendChild(item);
 			}
 
-			if (deleteItem?.parentElement) {
-				deleteItem.parentElement.insertBefore(frag, deleteItem);
+			const divider = menu.querySelector(".session-menu-divider");
+			if (divider?.parentElement) {
+				divider.parentElement.insertBefore(frag, divider);
 			} else {
+				// 没有分隔线就直接跟在最后一项后
 				menu.appendChild(frag);
 			}
 		}

@@ -320,11 +320,17 @@
 			void openPanel();
 		});
 
-		// 放在「导出会话」之后
-		const items = [...menu.querySelectorAll(".sidebar-account-item")];
-		const anchor = items.find((el) => el.textContent?.includes("导出会话"));
-		if (anchor?.parentElement) anchor.parentElement.insertBefore(button, anchor.nextSibling);
-		else menu.appendChild(button);
+		// 插到分隔线之前——分隔线下方只留「删除」这类危险操作
+		const divider = menu.querySelector(".session-menu-divider");
+		if (divider?.parentElement) {
+			divider.parentElement.insertBefore(button, divider);
+		} else {
+			// 没有分隔线时，跟在最后一个非删除项之后
+			const items = [...menu.querySelectorAll(".sidebar-account-item")];
+			const del = items.find((el) => el.textContent?.includes("删除"));
+			if (del?.parentElement) del.parentElement.insertBefore(button, del);
+			else menu.appendChild(button);
+		}
 	}
 
 	function tick() {
