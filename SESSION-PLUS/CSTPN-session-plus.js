@@ -23,6 +23,9 @@
 	const ITEM = '[role="menuitem"]';
 	const ROW = ".sidebar-session[data-session-id]";
 	const PIN_KEY = "cstpn-pinned-sessions";
+const TAG_KEY = "cstpn-session-tags";       // { sessionId: [tag, ...] }
+const TAGS_KEY = "cstpn-tag-list";          // 已用过的标签集合
+const FILTER_KEY = "cstpn-tag-filter";      // 当前筛选的标签（空 = 全部）
 	const TICK_MS = 400;
 
 	const state = { menuRow: null };
@@ -50,6 +53,24 @@
 .cstpn-hl{background:rgba(255,196,64,.45);color:inherit;border-radius:2px}
 .cstpn-hl[data-active="1"]{background:rgba(255,150,40,.85);color:#14181d}
 .cstpn-find-btn{display:inline-flex;align-items:center;justify-content:center}
+.cstpn-tag-badge{display:inline-flex;gap:3px;margin-left:6px;vertical-align:middle}
+.cstpn-tag-chip{padding:1px 5px;border-radius:4px;background:rgba(138,180,248,.22);color:var(--app-send,#8ab4f8);font-size:10px;line-height:1.4;white-space:nowrap}
+.cstpn-tag-more{padding:1px 4px;border-radius:4px;background:rgba(127,127,127,.22);font-size:10px;opacity:.7}
+.cstpn-tagbar{display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px 8px}
+.cstpn-tagbar-item{padding:2px 8px;border-radius:10px;border:1px solid rgba(127,127,127,.28);background:transparent;color:inherit;font-size:11px;cursor:pointer;font-family:inherit;opacity:.72}
+.cstpn-tagbar-item[data-on="1"]{background:var(--app-send,#8ab4f8);border-color:transparent;color:#14181d;opacity:1;font-weight:600}
+.cstpn-tagdlg-overlay{position:fixed;inset:0;z-index:2147000000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.52);padding:20px}
+.cstpn-tagdlg-card{box-sizing:border-box;width:min(360px,100%);display:flex;flex-direction:column;gap:12px;padding:18px;border-radius:14px;background:#1c1f24;color:#e8ecef;box-shadow:0 18px 48px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);font-family:inherit}
+.cstpn-tagdlg-title{margin:0;font-size:15px;font-weight:600}
+.cstpn-tagdlg-sub{margin:0;font-size:12px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cstpn-tagdlg-input{padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:inherit;font-size:13px;font-family:inherit;outline:none}
+.cstpn-tagdlg-input:focus{border-color:rgba(138,180,248,.7)}
+.cstpn-tagdlg-list{display:flex;flex-wrap:wrap;gap:5px;min-height:26px}
+.cstpn-tagdlg-chip{padding:3px 9px;border-radius:8px;border:none;background:rgba(138,180,248,.22);color:var(--app-send,#8ab4f8);font-size:12px;cursor:pointer;font-family:inherit}
+.cstpn-tagdlg-empty{font-size:12px;opacity:.45}
+.cstpn-tagdlg-foot{display:flex;justify-content:flex-end;gap:8px}
+.cstpn-tagdlg-btn{padding:7px 15px;border-radius:9px;border:1px solid rgba(255,255,255,.16);background:transparent;color:inherit;font-size:13px;cursor:pointer;font-family:inherit}
+.cstpn-tagdlg-save{background:var(--app-send,#8ab4f8);border-color:transparent;color:#14181d;font-weight:600}
 `;
 		document.head.appendChild(style);
 	}
@@ -107,6 +128,263 @@
 				group.insertBefore(row, group.firstElementChild);
 			}
 		}
+	}
+
+	// ================================================================ 标签分类
+	function tagMap() {
+		try {
+			return JSON.parse(localStorage.getItem(TAG_KEY) || "{}") || {};
+		} catch {
+			return {};
+		}
+	}
+
+	function saveTagMap(map) {
+		localStorage.setItem(TAG_KEY, JSON.stringify(map));
+		// 同步标签集合
+		const all = new Set();
+		for (const list of Object.values(map)) {
+			for (const t of list || []) all.add(t);
+		}
+		localStorage.setItem(TAGS_KEY, JSON.stringify([...all]));
+	}
+
+	function allTags() {
+		try {
+			return JSON.parse(localStorage.getItem(TAGS_KEY) || "[]") || [];
+		} catch {
+			return [];
+		}
+	}
+
+	function tagsOf(id) {
+		const map = tagMap();
+		return Array.isArray(map[id]) ? map[id] : [];
+	}
+
+	function setTags(id, list) {
+		const map = tagMap();
+		const clean = [...new Set((list || []).map((t) => String(t).trim()).filter(Boolean))];
+		if (clean.length) map[id] = clean;
+		else delete map[id];
+		saveTagMap(map);
+		applyTags();
+		applyTagFilter();
+	}
+
+	function toggleTag(id, tag) {
+		const cur = tagsOf(id);
+		setTags(id, cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag]);
+	}
+
+	function currentFilter() {
+		return localStorage.getItem(FILTER_KEY) || "";
+	}
+
+	function setFilter(tag) {
+		if (tag) localStorage.setItem(FILTER_KEY, tag);
+		else localStorage.removeItem(FILTER_KEY);
+		applyTagFilter();
+		renderFilterBar();
+	}
+
+	/** 给会话行渲染标签徽章。 */
+	function applyTags() {
+		const rows = [...document.querySelectorAll(ROW)];
+		if (!rows.length) return;
+		const map = tagMap();
+		for (const row of rows) {
+			const id = row.getAttribute("data-session-id");
+			const list = Array.isArray(map[id]) ? map[id] : [];
+			const textEl = row.querySelector(".sidebar-selection-text") || row;
+
+			// 移除旧徽章
+			row.querySelectorAll(".cstpn-tag-badge").forEach((el) => el.remove());
+
+			if (!list.length) continue;
+			const wrap = document.createElement("span");
+			wrap.className = "cstpn-tag-badge";
+			for (const t of list.slice(0, 3)) {
+				const chip = document.createElement("span");
+				chip.className = "cstpn-tag-chip";
+				chip.textContent = t;
+				wrap.appendChild(chip);
+			}
+			if (list.length > 3) {
+				const more = document.createElement("span");
+				more.className = "cstpn-tag-more";
+				more.textContent = `+${list.length - 3}`;
+				wrap.appendChild(more);
+			}
+			textEl.appendChild(wrap);
+		}
+	}
+
+	/** 按当前筛选隐藏不匹配的会话行。 */
+	function applyTagFilter() {
+		const filter = currentFilter();
+		const rows = [...document.querySelectorAll(ROW)];
+		for (const row of rows) {
+			const id = row.getAttribute("data-session-id");
+			const match = !filter || tagsOf(id).includes(filter);
+			row.style.display = match ? "" : "none";
+		}
+	}
+
+	// ================================================================ 标签筛选栏
+	let filterBar = null;
+
+	function renderFilterBar() {
+		const tags = allTags();
+		const cur = currentFilter();
+
+		// 没有标签就不用显示
+		if (!tags.length) {
+			filterBar?.remove();
+			filterBar = null;
+			return;
+		}
+
+		// 找会话行所在的「分组容器」——它的父级才是列表容器
+		const firstRow = document.querySelector(ROW);
+		if (!firstRow) return;
+		const group = firstRow.parentElement;
+		if (!group) return;
+		const listRoot = group.parentElement || group;
+
+		if (!filterBar?.isConnected) {
+			injectStyle();
+			filterBar = document.createElement("div");
+			filterBar.className = "cstpn-tagbar";
+			// 插到第一个分组之前
+			listRoot.insertBefore(filterBar, group);
+		} else if (filterBar.parentElement !== listRoot) {
+			// 结构变了，重新挂载
+			listRoot.insertBefore(filterBar, group);
+		}
+
+		filterBar.textContent = "";
+		const allBtn = document.createElement("button");
+		allBtn.type = "button";
+		allBtn.className = "cstpn-tagbar-item";
+		allBtn.textContent = "全部";
+		if (!cur) allBtn.setAttribute("data-on", "1");
+		allBtn.addEventListener("click", () => setFilter(""));
+		filterBar.appendChild(allBtn);
+
+		for (const t of tags) {
+			const b = document.createElement("button");
+			b.type = "button";
+			b.className = "cstpn-tagbar-item";
+			b.textContent = t;
+			if (t === cur) b.setAttribute("data-on", "1");
+			b.addEventListener("click", () => setFilter(t === cur ? "" : t));
+			filterBar.appendChild(b);
+		}
+	}
+
+	// ================================================================ 标签编辑对话框
+	function openTagDialog(row) {
+		const id = row?.getAttribute?.("data-session-id");
+		if (!id) return;
+
+		const existing = document.querySelector("[data-cstpn-tagdlg]");
+		if (existing) existing.remove();
+
+		injectStyle();
+		const overlay = document.createElement("div");
+		overlay.className = "cstpn-tagdlg-overlay";
+		overlay.setAttribute("data-cstpn-tagdlg", "");
+
+		const card = document.createElement("div");
+		card.className = "cstpn-tagdlg-card";
+
+		const title = document.createElement("h3");
+		title.className = "cstpn-tagdlg-title";
+		title.textContent = "标签（CSTP Next）";
+
+		const sub = document.createElement("p");
+		sub.className = "cstpn-tagdlg-sub";
+		sub.textContent = row.getAttribute("title") || "为该会话设置标签";
+
+		const input = document.createElement("input");
+		input.className = "cstpn-tagdlg-input";
+		input.placeholder = "输入标签后回车，可多个";
+		input.setAttribute("aria-label", "标签名");
+
+		const list = document.createElement("div");
+		list.className = "cstpn-tagdlg-list";
+
+		const cur = new Set(tagsOf(id));
+
+		const refresh = () => {
+			list.textContent = "";
+			if (!cur.size) {
+				const empty = document.createElement("span");
+				empty.className = "cstpn-tagdlg-empty";
+				empty.textContent = "暂无标签";
+				list.appendChild(empty);
+				return;
+			}
+			for (const t of cur) {
+				const chip = document.createElement("button");
+				chip.type = "button";
+				chip.className = "cstpn-tagdlg-chip";
+				chip.textContent = t + " ×";
+				chip.title = "点击移除";
+				chip.addEventListener("click", () => {
+					cur.delete(t);
+					refresh();
+				});
+				list.appendChild(chip);
+			}
+		};
+		refresh();
+
+		const commit = () => {
+			const v = input.value.trim();
+			if (!v) return;
+			cur.add(v);
+			input.value = "";
+			refresh();
+		};
+
+		input.addEventListener("keydown", (e) => {
+			e.stopPropagation();
+			if (e.key === "Enter") {
+				e.preventDefault();
+				commit();
+			} else if (e.key === "Escape") {
+				overlay.remove();
+			}
+		});
+
+		const foot = document.createElement("div");
+		foot.className = "cstpn-tagdlg-foot";
+
+		const cancel = document.createElement("button");
+		cancel.type = "button";
+		cancel.className = "cstpn-tagdlg-btn";
+		cancel.textContent = "取消";
+		cancel.addEventListener("click", () => overlay.remove());
+
+		const save = document.createElement("button");
+		save.type = "button";
+		save.className = "cstpn-tagdlg-btn cstpn-tagdlg-save";
+		save.textContent = "保存";
+		save.addEventListener("click", () => {
+			setTags(id, [...cur]);
+			overlay.remove();
+		});
+
+		foot.append(cancel, save);
+		card.append(title, sub, input, list, foot);
+		overlay.appendChild(card);
+		overlay.addEventListener("click", (e) => {
+			if (e.target === overlay) overlay.remove();
+		});
+		document.body.appendChild(overlay);
+		input.focus();
 	}
 
 	// ================================================================ 行内重命名
@@ -250,6 +528,16 @@
 				buildItem(isPinned ? "取消置顶（CSTP Next）" : "置顶会话（CSTP Next）",
 					isPinned ? ["M17 3l4 4-4 4M21 7H9M7 21l-4-4 4-4M3 17h12"] : ["M16 3a2 2 0 0 1 2 2v5.3l1.4 2.8a1 1 0 0 1-.9 1.4H13v6a1 1 0 0 1-2 0v-6H5.5a1 1 0 0 1-.9-1.4L6 10.3V5a2 2 0 0 1 2-2h8Z"],
 					() => { togglePin(single); }),
+			);
+
+			// 标签（仅单会话）
+			items.push(
+				buildItem("设置标签（CSTP Next）",
+					["M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82ZM7 7h.01"],
+					() => {
+						const row = lastRow || document.querySelector(`${ROW}[aria-current="page"]`);
+						openTagDialog(row);
+					}),
 			);
 		}
 
@@ -532,6 +820,9 @@
 			ensureHeaderButton();
 			ensureShortcutRows();
 			applyPin();
+			applyTags();
+			applyTagFilter();
+			renderFilterBar();
 		} catch {
 			/* 静默 */
 		}
@@ -546,5 +837,5 @@
 	}
 	window.setInterval(tick, TICK_MS);
 
-	window.__cstpnSess = { togglePin, pinned, renameInline, openFindbar, ensureShortcutRows };
+	window.__cstpnSess = { togglePin, pinned, renameInline, openFindbar, ensureShortcutRows, setTags, tagsOf, allTags, setFilter, openTagDialog };
 })();
