@@ -24,8 +24,8 @@ WEB_INP | patch | WEB_INP/CSTPN-apply-idimp.ps1 | WEB_INP/CSTPN-rollback-idimp.p
 WEB_INP_ADD | add | - | - | - | 导入·全自动（需手工合并 api.ts，前端复用 WEB_INP）
 WEB_OTP | patch | WEB_OTP/CSTPN-apply-otp.ps1 | WEB_OTP/CSTPN-rollback-otp.ps1 | CSTPN-cstoa-open-auth.js | 动态码登录入口
 WEB_SRH | patch | WEB_SRH/CSTPN-apply-srh.ps1 | WEB_SRH/CSTPN-rollback-srh.ps1 | CSTPN-session-search.js | 会话列表搜索（侧栏，按标题/ID 过滤）
+TURN-NAV | patch | - | - | CSTPN-turn-nav.js | 轮次导航条（右侧细刻度，可点击跳转）
 TOOL-SUM | test | - | - | CSTPN-tool-summary.js | 工具调用摘要面板
-TURN-NAV | test | - | - | CSTPN-turn-nav.js | 轮次导航条
 SESSION-PLUS | test | - | - | CSTPN-session-plus.js | 置顶/行内重命名/会话内搜索（正文高亮）
 ```
 
@@ -43,6 +43,6 @@ WEB_INP | WEB_INP_ADD
 | 类型 | 分支 | 路径 |
 | --- | --- | --- |
 | 补丁脚本 | patch | `WEB_*/CSTPN-*.ps1` |
-| 前端脚本 | patch | `WEB_*/CSTPN-*.js` |
+| 前端脚本 | patch | `WEB_*/`、`TURN-NAV/` 下的 `CSTPN-*.js` |
 | 后端增量 | add | `WEB_INP/CSTPN-backend-import.ts` |
-| 测试前端 | test | `TOOL-SUM/`、`TURN-NAV/`、`SESSION-PLUS/` 下的 `CSTPN-*.js` |
+| 测试前端 | test | `TOOL-SUM/`、`SESSION-PLUS/` 下的 `CSTPN-*.js` |
