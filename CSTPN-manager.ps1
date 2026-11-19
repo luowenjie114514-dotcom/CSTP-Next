@@ -9,7 +9,7 @@
       - 启动时从 GitHub 拉取 CATALOG.md 更新补丁清单（失败则用内置清单）
       - 找不到 cst-pilot 时弹出文件夹选择对话框
       - 本地缺少补丁文件时自动从 GitHub 下载（按分支取对应文件）
-      - 冲突补丁自动互斥（WEB_INP ↔ WEB_INP_ADD，WEB_SRH ↔ SESSION-PLUS）
+      - 冲突补丁自动互斥（仅 WEB_INP ↔ WEB_INP_ADD）
 
 .PARAMETER Target
     cst-pilot 目录。省略时自动探测，探测失败弹选择框。
@@ -132,7 +132,7 @@ function Sync-Catalog {
     try {
         $headers = @{ Accept = 'application/vnd.github.raw'; 'User-Agent' = 'cstpn-manager' }
         if ($script:Token) { $headers['Authorization'] = "Bearer $($script:Token)" }
-        $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/$($script:Repo)/contents/CATALOG.md?ref=main" -Headers $headers -UseBasicParsing -TimeoutSec 10
+        $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/$($script:Repo)/contents/CATALOG.md?ref=main" -Headers $headers -UseBasicParsing -TimeoutSec 8
         $md = $resp.Content
         if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
     } catch { }
@@ -140,7 +140,7 @@ function Sync-Catalog {
     # 方式 2：raw 兜底
     if (-not $md) {
         try {
-            $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$($script:Repo)/main/CATALOG.md" -UseBasicParsing -TimeoutSec 10).Content
+            $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$($script:Repo)/main/CATALOG.md" -UseBasicParsing -TimeoutSec 8).Content
             if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
         } catch { }
     }
@@ -148,56 +148,6 @@ function Sync-Catalog {
     if (-not $md) { $script:SyncInfo = '远程不可用，用内置'; return }
 
     if ($md) { Parse-Catalog $md; return }
-    try {
-        $items = @()
-        $conflicts = @{}
-        $cBlock = [regex]::Match($md, '(?s)```conflicts\r?\n(.*?)```')
-        if ($cBlock.Success) {
-            foreach ($line in ($cBlock.Groups[1].Value -split "`r?`n")) {
-                if ($line -match '^\s*(\S+)\s*\|\s*(\S+)\s*$') {
-                    $a = $Matches[1]; $b = $Matches[2]
-                    if (-not $conflicts.ContainsKey($a)) { $conflicts[$a] = @() }
-                    if (-not $conflicts.ContainsKey($b)) { $conflicts[$b] = @() }
-                    $conflicts[$a] += $b
-                    $conflicts[$b] += $a
-                }
-            }
-        }
-        $block = [regex]::Match($md, '(?s)```catalog\r?\n(.*?)```')
-        if ($block.Success) {
-            foreach ($line in ($block.Groups[1].Value -split "`r?`n")) {
-                if (-not $line.Trim()) { continue }
-                $p = $line -split '\s*\|\s*'
-                if ($p.Count -lt 6) { continue }
-                $id = $p[0].Trim()
-                $applyVal = ''
-                if ($p[2].Trim() -ne '-') { $applyVal = $p[2].Trim() }
-                $rollbackVal = ''
-                if ($p[3].Trim() -ne '-') { $rollbackVal = $p[3].Trim() }
-                $markerVal = ''
-                if ($p[4].Trim() -ne '-') { $markerVal = $p[4].Trim() }
-                $conflictVal = @()
-                if ($conflicts.ContainsKey($id)) { $conflictVal = $conflicts[$id] }
-                $items += @{
-                    Id = $id
-                    Branch = $p[1].Trim()
-                    Apply = $applyVal
-                    Rollback = $rollbackVal
-                    Marker = $markerVal
-                    Name = $p[5].Trim()
-                    Conflicts = $conflictVal
-                }
-            }
-        }
-        if ($items.Count -gt 0) {
-            $script:Catalog = $items
-            $script:SyncInfo = "已同步（$($items.Count) 项）"
-        } else {
-            $script:SyncInfo = '清单格式异常，用内置'
-        }
-    } catch {
-        $script:SyncInfo = '解析失败，用内置'
-    }
 }
 
 # ---------------------------------------------------------------- 目录选择
@@ -480,32 +430,28 @@ function Show-Menu([string]$Kit) {
 }
 
 # ---------------------------------------------------------------- 入口
-# ---------------------------------------------------------------- 后台清单同步
-# 动画播放期间并行拉取 CATALOG.md，结束后沿用本次结果（不再重复请求）
-$script:SyncJob = $null
+# ---------------------------------------------------------------- 联网更新清单（优先）
+# 启动即请求 GitHub，不留本地 CATALOG 副本，避免读到旧数据。
+# 用 HttpWebRequest 异步发起，动画播放期间完成，不阻塞也不易超时。
+$script:SyncReq = $null
+$script:SyncAsync = $null
 
 if (-not $NoSync) {
-    $targetForJob = $Target
-    $repoForJob = $script:Repo
-    $tokenForJob = $script:Token
-    $script:SyncJob = Start-Job -ScriptBlock {
-        param($repo, $token)
-        $md = $null
-        try {
-            $headers = @{ Accept = 'application/vnd.github.raw'; 'User-Agent' = 'cstpn-manager' }
-            if ($token) { $headers['Authorization'] = "Bearer $token" }
-            $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/$repo/contents/CATALOG.md?ref=main" -Headers $headers -UseBasicParsing -TimeoutSec 15
-            $md = $resp.Content
-            if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
-        } catch { }
-        if (-not $md) {
-            try {
-                $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$repo/main/CATALOG.md" -UseBasicParsing -TimeoutSec 15).Content
-                if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
-            } catch { }
-        }
-        return $md
-    } -ArgumentList $repoForJob, $tokenForJob
+    $repo = $script:Repo
+    $token = $script:Token
+    try {
+        $req = [System.Net.HttpWebRequest]::Create("https://api.github.com/repos/$repo/contents/CATALOG.md?ref=main")
+        $req.Timeout = 15000
+        $req.ReadWriteTimeout = 15000
+        $req.UserAgent = 'cstpn-manager'
+        $req.Accept = 'application/vnd.github.raw'
+        if ($token) { $req.Headers['Authorization'] = "Bearer $token" }
+        $script:SyncReq = $req
+        $script:SyncAsync = $req.BeginGetResponse($null, $null)
+    } catch {
+        $script:SyncReq = $null
+        $script:SyncAsync = $null
+    }
 }
 
 # ---------------------------------------------------------------- 启动标识
@@ -527,42 +473,44 @@ Start-Sleep -Milliseconds 700
 Write-Host ""
 Write-Host "CSTPN 补丁管理器" -ForegroundColor Cyan
 
-# ---------------------------------------------------------------- 接收后台清单
-if ($script:SyncJob) {
+# ---------------------------------------------------------------- 接收联网清单
+Write-Host -NoNewline "同步清单… "
+$script:SyncInfo = '远程不可用，用内置'
+$md = $null
+
+if ($script:SyncAsync -and $script:SyncReq) {
     try {
-        Write-Host -NoNewline "同步清单… "
-        $null = Wait-Job -Job $script:SyncJob -Timeout 20
-        $md = Receive-Job -Job $script:SyncJob -ErrorAction SilentlyContinue
-        if ($md) {
-            $script:PendingCatalogMd = $md
-            $script:SyncInfo = '已获取'
-        } else {
-            $script:SyncInfo = '远程不可用，用内置'
+        $resp = $null
+        if ($script:SyncAsync.AsyncWaitHandle.WaitOne(12000)) {
+            $resp = $script:SyncReq.EndGetResponse($script:SyncAsync)
+        }
+        if ($resp) {
+            $stream = $resp.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+            $md = $reader.ReadToEnd()
+            $reader.Close()
+            $stream.Close()
+            $resp.Close()
         }
     } catch {
-        $script:SyncInfo = '同步失败，用内置'
-    } finally {
-        Remove-Job -Job $script:SyncJob -Force -ErrorAction SilentlyContinue
-        $script:SyncJob = $null
+        $md = $null
     }
-    Write-Host $script:SyncInfo -ForegroundColor Gray
-} else {
-    $script:SyncInfo = if ($NoSync) { '已跳过' } else { '未同步' }
 }
 
-$Target = Resolve-Target
-if (-not (Test-Kit $Target)) {
-    Write-Host "所选目录不像 cst-pilot：$Target" -ForegroundColor Red
-    Write-Host "（应包含 agent/home/extensions/oauth/oa.ts）" -ForegroundColor Red
-    exit 1
+# 兜底：raw.githubusercontent
+if (-not $md) {
+    try {
+        $md = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$($script:Repo)/main/CATALOG.md" -UseBasicParsing -TimeoutSec 10).Content
+        if ($md -is [byte[]]) { $md = [System.Text.Encoding]::UTF8.GetString($md) }
+    } catch { }
 }
-$Target = (Resolve-Path -LiteralPath $Target).Path
 
-Write-Host "目标   $Target"
-if (-not (Test-Path $script:CacheDir)) { New-Item -ItemType Directory -Path $script:CacheDir -Force | Out-Null }
-Write-Host "缓存   $script:CacheDir"
+if ($md) {
+    $script:PendingCatalogMd = $md
+    $script:SyncInfo = '已获取'
+}
+Write-Host $script:SyncInfo -ForegroundColor Gray
 
-# 用后台取到的 Markdown 解析清单（避免二次请求）
 if ($script:PendingCatalogMd) {
     Parse-Catalog $script:PendingCatalogMd
     $script:PendingCatalogMd = $null
