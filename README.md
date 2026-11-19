@@ -21,6 +21,7 @@
 | [`WEB_INP`](WEB_INP) | 会话导入（半自动） |
 | [`WEB_OTP`](WEB_OTP) | 动态码登录入口 + 账户页 OA 文案 |
 | [`WEB_SRH`](WEB_SRH) | 会话列表搜索 |
+| [`TURN-NAV`](TURN-NAV) | 会话右侧轮次导航条 |
 
 ## 安装
 
@@ -32,7 +33,7 @@ cd CSTP-Next
 .\WEB_EXP\CSTPN-apply-export.ps1 -Target 'C:\path\to\cst-pilot'           # 安装
 ```
 
-或用管理器统一管理：`.\CSTPN-manager.ps1 -Target '...'`
+或用管理器统一管理：`.\CSTPN-manager.cmd` / `.\CSTPN-manager.ps1 -Target '...'`
 
 改完重启 CST Pilot + `Ctrl + F5` 强刷。
 
