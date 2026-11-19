@@ -78,6 +78,18 @@
 .cstpn-select-item{display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:none;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:var(--font-ui,13px);text-align:left;cursor:pointer}
 .cstpn-select-item:hover{background:rgba(127,127,127,.16)}
 .cstpn-select-item[data-selected="true"]{background:rgba(127,127,127,.24);font-weight:600}
+.cstpn-batch-overlay{position:fixed;inset:0;z-index:2147000000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.52);padding:20px}
+.cstpn-batch-card{box-sizing:border-box;width:min(380px,100%);display:flex;flex-direction:column;gap:14px;padding:20px;border-radius:14px;background:#1c1f24;color:#e8ecef;box-shadow:0 18px 48px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);font-family:inherit}
+.cstpn-batch-title{margin:0;font-size:15px;font-weight:600}
+.cstpn-batch-sub{margin:0;font-size:12px;opacity:.6}
+.cstpn-batch-row{display:flex;align-items:center;gap:12px}
+.cstpn-batch-row>span{flex:none;width:40px;font-size:13px;opacity:.75}
+.cstpn-batch-opts{display:flex;gap:6px;flex-wrap:wrap}
+.cstpn-batch-opt{padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:transparent;color:inherit;font-size:12px;cursor:pointer;font-family:inherit}
+.cstpn-batch-opt[data-on="1"]{background:var(--app-send,#8ab4f8);border-color:transparent;color:#14181d;font-weight:600}
+.cstpn-batch-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.cstpn-batch-btn{padding:8px 16px;border-radius:9px;border:1px solid rgba(255,255,255,.16);background:transparent;color:inherit;font-size:13px;cursor:pointer;font-family:inherit}
+.cstpn-batch-go{background:var(--app-send,#8ab4f8);border-color:transparent;color:#14181d;font-weight:600}
 .cstpn-check{display:flex;align-items:center;gap:8px;font-size:var(--font-ui,13px);cursor:pointer}
 .cstpn-check input{margin:0;cursor:pointer}
 .cstpn-note{font-size:var(--font-ui,13px);color:var(--chat-muted,#6b7280);margin:0}
@@ -525,6 +537,114 @@ ${blocks}
 		return svg;
 	}
 
+	// ---------------------------------------------------------------- 批量导出对话框
+	/**
+	 * 多选导出：先让用户选格式/主题/选项，再逐个下载。
+	 * 之前直接 runExport(ids, options) 会以默认 png 立刻开始下载，没有选择机会。
+	 */
+	function openBatchDialog(ids) {
+		const existing = document.querySelector('[data-cstpn-batch]');
+		if (existing) existing.remove();
+
+		injectStyle();
+		const overlay = document.createElement("div");
+		overlay.className = "cstpn-batch-overlay";
+		overlay.setAttribute("data-cstpn-batch", "");
+
+		const card = document.createElement("div");
+		card.className = "cstpn-batch-card";
+
+		const title = document.createElement("h3");
+		title.className = "cstpn-batch-title";
+		title.textContent = `批量导出（CSTP Next）· ${ids.length} 个会话`;
+
+		const sub = document.createElement("p");
+		sub.className = "cstpn-batch-sub";
+		sub.textContent = "每个会话单独生成一个文件";
+
+		// 格式
+		const fmtRow = document.createElement("div");
+		fmtRow.className = "cstpn-batch-row";
+		const fmtLabel = document.createElement("span");
+		fmtLabel.textContent = "格式";
+		const fmtGroup = document.createElement("div");
+		fmtGroup.className = "cstpn-batch-opts";
+		const fmtState = { value: options.format || "png" };
+		for (const [key, label] of [["png", "PNG 图片"], ["html", "离线 HTML"], ["json", "JSON 数据"]]) {
+			const b = document.createElement("button");
+			b.type = "button";
+			b.className = "cstpn-batch-opt";
+			b.textContent = label;
+			if (key === fmtState.value) b.setAttribute("data-on", "1");
+			b.addEventListener("click", () => {
+				fmtState.value = key;
+				[...fmtGroup.children].forEach((x) => x.removeAttribute("data-on"));
+				b.setAttribute("data-on", "1");
+			});
+			fmtGroup.appendChild(b);
+		}
+		fmtRow.append(fmtLabel, fmtGroup);
+
+		// 主题
+		const themeRow = document.createElement("div");
+		themeRow.className = "cstpn-batch-row";
+		const themeLabel = document.createElement("span");
+		themeLabel.textContent = "主题";
+		const themeGroup = document.createElement("div");
+		themeGroup.className = "cstpn-batch-opts";
+		const themeState = { value: options.theme || "dark" };
+		for (const [key, label] of [["dark", "夜间"], ["light", "日间"]]) {
+			const b = document.createElement("button");
+			b.type = "button";
+			b.className = "cstpn-batch-opt";
+			b.textContent = label;
+			if (key === themeState.value) b.setAttribute("data-on", "1");
+			b.addEventListener("click", () => {
+				themeState.value = key;
+				[...themeGroup.children].forEach((x) => x.removeAttribute("data-on"));
+				b.setAttribute("data-on", "1");
+			});
+			themeGroup.appendChild(b);
+		}
+		themeRow.append(themeLabel, themeGroup);
+
+		// 页脚
+		const foot = document.createElement("div");
+		foot.className = "cstpn-batch-foot";
+
+		const cancel = document.createElement("button");
+		cancel.type = "button";
+		cancel.className = "cstpn-batch-btn";
+		cancel.textContent = "取消";
+		cancel.addEventListener("click", () => overlay.remove());
+
+		const go = document.createElement("button");
+		go.type = "button";
+		go.className = "cstpn-batch-btn cstpn-batch-go";
+		go.textContent = "开始导出";
+		go.addEventListener("click", () => {
+			overlay.remove();
+			void runExport(ids, { ...options, format: fmtState.value, theme: themeState.value });
+		});
+
+		foot.append(cancel, go);
+		card.append(title, sub, fmtRow, themeRow, foot);
+		overlay.appendChild(card);
+
+		overlay.addEventListener("click", (e) => {
+			if (e.target === overlay) overlay.remove();
+		});
+		const onKey = (e) => {
+			if (e.key === "Escape") {
+				overlay.remove();
+				document.removeEventListener("keydown", onKey, true);
+			}
+		};
+		document.addEventListener("keydown", onKey, true);
+
+		document.body.appendChild(overlay);
+	}
+
 	function buildItem(menu) {
 		const button = document.createElement("button");
 		button.type = "button";
@@ -538,9 +658,11 @@ ${blocks}
 			event.stopPropagation();
 			const ids = targetSessionIds();
 			if (ids.length === 1) {
+				// 单个：进导出选项页
 				location.assign(`/s/${encodeURIComponent(ids[0])}/export`);
 			} else if (ids.length > 1) {
-				void runExport(ids, options);
+				// 多个：同样先弹选项面板，不直接下载
+				openBatchDialog(ids);
 			} else {
 				toast("没有识别到会话", "error", 2600);
 			}
